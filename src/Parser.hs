@@ -137,7 +137,9 @@ statementParser = do
            try varDefParser <|>
            try whileStatementParser <|>
            try assignParser <|>
-           ifStatementParser
+           try ifStatementParser <|>
+           try forStatementParser <|>
+           ExprStatement <$> expressionParser
 
     wsSkip
 
@@ -176,7 +178,8 @@ returnParser = do
     wsSkip
     Return <$> expressionParser
 
-assignKinds = [("=", AssignNormal)]
+assignKinds = [("=", AssignNormal), ("+=", AssignAdd), ("-=", AssignMinus), ("*=", AssignMult),
+               ("|=", AssignOr), ("&=", AssignAnd), ("/=", AssignDiv), ("^=", AssignXor)]
 
 assignParser :: CharParser st CStatement
 assignParser = do
@@ -206,6 +209,29 @@ conditionStatementParser cond constructor = do
 
     pure $ constructor condition body
 
+forStatementParser :: CharParser st CStatement
+forStatementParser = do
+    wsSkip
+    string "for"
+    wsSkip
+    (ini, cond, step) <- between (char '(') (char ')') forInformation
+
+    body <- block
+
+    pure $ ForStatement ini cond step body
+    where
+        forInformation = do
+            ini <- statementParser
+            wsSkip
+            cond <- expressionParser
+            wsSkip
+            char ';'
+            wsSkip
+            step <- expressionParser
+            wsSkip
+
+            pure (ini, cond, step)
+
 wsSkip :: CharParser st ()
 wsSkip = do
     _ <- many (oneOf " \t")
@@ -229,9 +255,12 @@ block = do
             pure statements
 
 expressionParser :: CharParser st CExpression
-expressionParser = try cArithParser <|>
+expressionParser = try prefixParser <|>
+                   try postfixParser <|>
+                   try cArithParser <|>
                    try (VarRef <$> cIdentifier) <|>
                    try arrayAccessParser <|>
+                   try funcCallParser <|>
                    LitInt . read <$> many1 digit
 
 arrayAccessParser :: CharParser st CExpression
@@ -242,13 +271,47 @@ arrayAccessParser = do
     pure $ CArrayAccess name expr
 
 operandParser :: CharParser st CExpression
-operandParser = try (between (char '(') (char ')') expressionParser) <|>
+operandParser = try (between (char '(') (char ')') (expressionParser <|> prefixParser <|> postfixParser)) <|>
                 try arrayAccessParser <|>
+                try funcCallParser <|>
                 try (VarRef <$> cIdentifier) <|>
                 LitInt . read <$> many1 digit
 
+funcCallParser :: CharParser st CExpression
+funcCallParser = do
+    funcName <- cIdentifier
+
+    arguments <- between (char '(') (char ')') $ sepEndBy expressionParser (wsSkip >> char ',' >> wsSkip)
+
+    pure $ FuncCall funcName arguments
+
+cPrefixOps = [("++", PreIncrement), ("--", PreDecrement), ("!", PreNot), ("*", Dereference)]
+
+prefixParser :: CharParser st CExpression
+prefixParser = do
+    op <- choice $ map (try . string . fst) cPrefixOps
+
+    expr <- operandParser
+
+    case lookup op cPrefixOps of
+        Nothing -> fail $ "Unknown prefix operation: " ++ op
+        Just prefixOp -> pure $ CPrefix prefixOp expr
+
+cPostfixOps = [("++", PostIncrement), ("--", PostDecrement)]
+
+postfixParser :: CharParser st CExpression
+postfixParser = do
+    expr <- operandParser
+
+    op <- choice $ map (try . string . fst) cPostfixOps
+
+    case lookup op cPostfixOps of
+        Nothing -> fail $ "Unknown postfix operation: " ++ op
+        Just postfixOp -> pure $ CPostfix postfixOp expr
+
 cArithOps = [("%", CMod), ("*", CMult), ("/", CDiv), ("+", CAdd), ("-", CMinus),
-             (">", CGT), ("<", CLT), ("==", CTestEq), ("<=", CLTE), (">=", CGTE), ("!=", CNE)]
+             (">", CGT), ("<", CLT), ("==", CTestEq), ("<=", CLTE), (">=", CGTE), ("!=", CNE),
+             ("^", CXor)]
 
 extractExprOp :: (CExpression, Maybe String) -> Maybe (CExpression, CExpression -> CExpression -> CExpression)
 extractExprOp (expr, op) = (expr,) <$> (op >>= (`lookup` cArithOps))

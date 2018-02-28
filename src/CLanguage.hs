@@ -11,6 +11,13 @@ data PreKind = Include
     deriving (Show, Eq)
 
 data AssignKind = AssignNormal
+                | AssignAdd
+                | AssignOr
+                | AssignAnd
+                | AssignMinus
+                | AssignMult
+                | AssignDiv
+                | AssignXor
     deriving (Show, Eq)
 
 data Type = Type Bool VarKind String
@@ -28,11 +35,26 @@ data CStatement = Return CExpression
                 | VarDef Var (Maybe CExpression)
                 | IfStatement CExpression [CStatement]
                 | WhileStatement CExpression [CStatement]
+                | ForStatement CStatement CExpression CExpression [CStatement]
                 | Assign AssignKind String CExpression
+                | ExprStatement CExpression
+    deriving (Show, Eq)
+
+data PrefixOp = PreIncrement
+              | PreDecrement
+              | PreNot
+              | Dereference
+    deriving (Show, Eq)
+
+data PostfixOp = PostIncrement
+               | PostDecrement
     deriving (Show, Eq)
 
 data CExpression = VarRef String
                  | LitInt Int
+                 | FuncCall String [CExpression]
+                 | CPrefix PrefixOp CExpression
+                 | CPostfix PostfixOp CExpression
                  | CArrayAccess String CExpression
                  | CAdd CExpression CExpression
                  | CMinus CExpression CExpression
@@ -45,6 +67,7 @@ data CExpression = VarRef String
                  | CMult CExpression CExpression
                  | CDiv CExpression CExpression
                  | CMod CExpression CExpression
+                 | CXor CExpression CExpression
     deriving (Show, Eq)
 
 data CFile = CFile String [CElement]
