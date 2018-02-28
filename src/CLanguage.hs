@@ -10,6 +10,9 @@ data PreKind = Include
              | MiscPreKind
     deriving (Show, Eq)
 
+data AssignKind = Normal
+    deriving (Show, Eq)
+
 data Type = Type Bool VarKind String
     deriving (Show, Eq)
 
@@ -22,8 +25,10 @@ data CElement = Preprocessor PreKind String
     deriving (Show, Eq)
 
 data CStatement = Return CExpression
-                | VarDef Var
+                | VarDef Var (Maybe CExpression)
                 | IfStatement CExpression [CStatement]
+                | WhileStatement CExpression [CStatement]
+                | Assign AssignKind String CExpression
     deriving (Show, Eq)
 
 data CExpression = VarRef String

@@ -134,7 +134,9 @@ statementParser :: CharParser st CStatement
 statementParser = do
     wsSkip
     val <- try returnParser <|>
-           try (VarDef <$> varParser) <|>
+           try varDefParser <|>
+           try whileStatementParser <|>
+           try assignParser <|>
            ifStatementParser
 
     wsSkip
@@ -145,6 +147,20 @@ statementParser = do
     wsSkip
 
     pure val
+
+varDefParser :: CharParser st CStatement
+varDefParser = do
+    var <- varParser
+
+    init <- optionMaybe initialization
+
+    pure $ VarDef var init
+
+    where initialization = do
+            wsSkip
+            char '='
+            wsSkip
+            expressionParser
 
 varParser :: CharParser st Var
 varParser = do
@@ -160,10 +176,23 @@ returnParser = do
     wsSkip
     Return <$> expressionParser
 
-ifStatementParser :: CharParser st CStatement
-ifStatementParser = do
+assignParser :: CharParser st CStatement
+assignParser = do
+    lhs <- cIdentifier
     wsSkip
-    string "if"
+    char '='
+    wsSkip
+    rhs <- expressionParser
+
+    pure $ Assign Normal lhs rhs
+
+ifStatementParser = conditionStatementParser "if" IfStatement
+whileStatementParser = conditionStatementParser "while" WhileStatement
+
+conditionStatementParser :: String -> (CExpression -> [CStatement] -> CStatement) -> CharParser st CStatement
+conditionStatementParser cond constructor = do
+    wsSkip
+    string cond
 
     wsSkip
     condition <- between (char '(') (char ')') expressionParser
@@ -171,7 +200,7 @@ ifStatementParser = do
 
     body <- block
 
-    pure $ IfStatement condition body
+    pure $ constructor condition body
 
 wsSkip :: CharParser st ()
 wsSkip = do

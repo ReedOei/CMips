@@ -5,6 +5,7 @@ import Data.Maybe
 
 import Text.ParserCombinators.Parsec
 
+import CLanguage
 import Parser
 
 main :: IO ()

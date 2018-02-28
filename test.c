@@ -1,7 +1,11 @@
 int test(int y);
 
 int f(int x) {
-    int n;
+    int n = 4;
+
+    while (n < 5) {
+        n = n + 1;
+    }
 
     if (n == 0) {
         return n + 2;
