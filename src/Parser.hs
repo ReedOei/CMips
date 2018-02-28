@@ -190,13 +190,10 @@ assignParser = do
         Nothing -> pure $ Assign Nothing lhs rhs
         Just opName -> pure $ Assign (lookup opName cArithOps) lhs rhs
 
-ifStatementParser = conditionStatementParser "if" IfStatement
-whileStatementParser = conditionStatementParser "while" WhileStatement
-
-conditionStatementParser :: String -> (CExpression -> [CStatement] -> CStatement) -> CharParser st CStatement
-conditionStatementParser cond constructor = do
+whileStatementParser :: CharParser st CStatement
+whileStatementParser = do
     wsSkip
-    string cond
+    string "while"
 
     wsSkip
     condition <- between (char '(') (char ')') expressionParser
@@ -204,7 +201,22 @@ conditionStatementParser cond constructor = do
 
     body <- block
 
-    pure $ constructor condition body
+    pure $ WhileStatement condition body
+
+ifStatementParser :: CharParser st CStatement
+ifStatementParser = do
+    wsSkip
+    string "if"
+
+    wsSkip
+    condition <- between (char '(') (char ')') expressionParser
+    wsSkip
+
+    body <- block
+
+    branches <- optionMaybe $ (wsSkip >> string "else" >> wsSkip >> (try (ElseBlock <$> block) <|> try ifStatementParser))
+
+    pure $ IfStatement condition branches body
 
 forStatementParser :: CharParser st CStatement
 forStatementParser = do

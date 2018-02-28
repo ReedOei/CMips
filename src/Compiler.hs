@@ -133,7 +133,7 @@ compileStatement (Environment file global local) (VarDef (Var (Type isConst varK
 
     where (newLocal, reg) = useNextRegister "s" varName local
 
-compileStatement (Environment file global local) (IfStatement cond body) =
+compileStatement (Environment file global local) (IfStatement cond _ body) =
     (purgeRegTypeEnv "t" finalEnv,
      Label labelStart : instr ++ bodyInstr ++ [Label labelEnd])
     where (globalLabelStart, labelStart) = getNextLabel global "if"

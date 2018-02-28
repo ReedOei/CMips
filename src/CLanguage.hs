@@ -23,7 +23,8 @@ data CElement = Preprocessor PreKind String
 
 data CStatement = Return CExpression
                 | VarDef Var (Maybe CExpression)
-                | IfStatement CExpression [CStatement]
+                | IfStatement CExpression (Maybe CStatement) [CStatement]
+                | ElseBlock [CStatement]
                 | WhileStatement CExpression [CStatement]
                 | ForStatement CStatement CExpression CStatement [CStatement]
                 | Assign (Maybe BinaryOp) (Either String CExpression) CExpression
