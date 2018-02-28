@@ -75,14 +75,6 @@ preprocessorParser = do
 
     return $ Preprocessor preKind val
 
-isConst :: CharParser st Bool
-isConst = do
-    wsSkip
-    constM <- optionMaybe $ string "const"
-    wsSkip
-
-    return $ isJust constM
-
 functionParser :: CharParser st CElement
 functionParser = do
     returnType <- typeParser
@@ -93,19 +85,16 @@ functionParser = do
     arguments <- between (char '(') (char ')') $ sepBy (try varParser) (char ',')
 
     wsSkip
-
-    -- const <- isConst
-    wsSkip
     next <- lookAhead (choice [char ';', char '{'])
 
     if next == ';' then do
         char ';'
 
-        pure $ FuncDef returnType funcName arguments False []
+        pure $ FuncDef returnType funcName arguments []
     else do
         body <- block
 
-        pure $ FuncDef returnType funcName arguments False body
+        pure $ FuncDef returnType funcName arguments body
 
 typeParser :: CharParser st Type
 typeParser = do
@@ -126,7 +115,7 @@ typeParser = do
                       Just '*' -> Pointer
                       Nothing -> Value
 
-    return $ Type False varKind typeName
+    return $ Type varKind typeName
 
 statementParser :: CharParser st CStatement
 statementParser = do
@@ -295,8 +284,6 @@ funcCallParser = do
 
     pure $ FuncCall funcName arguments
 
-cPrefixOps = [("++", PreIncrement), ("--", PreDecrement), ("!", PreNot), ("*", Dereference)]
-
 prefixParser :: CharParser st CExpression
 prefixParser = do
     op <- choice $ map (try . string . fst) cPrefixOps
@@ -307,8 +294,6 @@ prefixParser = do
         Nothing -> fail $ "Unknown prefix operation: " ++ op
         Just prefixOp -> pure $ CPrefix prefixOp var
 
-cPostfixOps = [("++", PostIncrement), ("--", PostDecrement)]
-
 postfixParser :: CharParser st CExpression
 postfixParser = do
     var <- cIdentifier
@@ -318,12 +303,6 @@ postfixParser = do
     case lookup op cPostfixOps of
         Nothing -> fail $ "Unknown postfix operation: " ++ op
         Just postfixOp -> pure $ CPostfix postfixOp var
-
-cArithOps = [("*", Mult), ("/", Div), ("+", Add), ("-", Minus),
-             (">=", CGTE), ("<=", CLTE), ("!=", CNE), ("==", CEQ),
-             ("/", Div), ("%", Mod), ("||", Or), ("&&", And),
-             ("|", OrBit), ("&", AndBit), ("<<", ShiftLeft), (">>", ShiftRight),
-             ("^", Xor), (">", CGT), ("<", CLT)]
 
 cArithBinary = map (second CBinaryOp) cArithOps
 

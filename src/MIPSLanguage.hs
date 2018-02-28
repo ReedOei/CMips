@@ -7,6 +7,7 @@ data MIPSFile = MIPSFile String [MIPSInstruction]
 
 data MIPSInstruction = Inst MIPSOp String String String
                      | Label String
+                     | Comment String
     deriving Show
 
 data MIPSOp = OP_ADD
