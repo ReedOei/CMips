@@ -11,6 +11,8 @@ import Data.Maybe (isJust)
 
 import Text.ParserCombinators.Parsec
 
+import System.IO.Unsafe
+
 data VarKind = Pointer | Value
     deriving (Show, Eq)
 
@@ -39,6 +41,16 @@ data CStatement = Return CExpression
 data CExpression = VarRef String
                  | LitInt Int
                  | CAdd CExpression CExpression
+                 | CMinus CExpression CExpression
+                 | CGT CExpression CExpression
+                 | CLT CExpression CExpression
+                 | CTestEq CExpression CExpression
+                 | CLTE CExpression CExpression
+                 | CGTE CExpression CExpression
+                 | CNE CExpression CExpression
+                 | CMult CExpression CExpression
+                 | CDiv CExpression CExpression
+                 | CMod CExpression CExpression
     deriving (Show, Eq)
 
 data CFile = CFile String [CElement]
@@ -68,7 +80,11 @@ cElement = try preprocessorParser <|>
              pure MiscElement
 
 cIdentifier :: CharParser st String
-cIdentifier = many1 (alphaNum <|> oneOf "_:~") -- Allow : for scope resolution and ~ for destructors
+cIdentifier = do
+    first <- letter
+    rest <- many (alphaNum <|> oneOf "_") -- Allow : for scope resolution and ~ for destructors
+
+    pure $ first:rest
 
 commentParser :: CharParser st CElement
 commentParser = do
@@ -91,7 +107,7 @@ preprocessorParser = do
                     "endif" -> EndIf
                     _ -> MiscPreKind
 
-    space
+    spaces
 
     val <- many (noneOf "\n")
 
@@ -112,28 +128,26 @@ functionParser = do
 
     funcName <- cIdentifier
 
-    arguments <- between (char '(') (char ')') $ sepBy (try varParser) (spaces >> char ',' >> spaces)
+    arguments <- between (char '(') (char ')') $ sepBy (try varParser) (char ',')
 
     spaces
 
-    const <- isConst
-
+    -- const <- isConst
     spaces
-
     next <- lookAhead (choice [char ';', char '{'])
 
     if next == ';' then do
         char ';'
 
-        pure $ FuncDef returnType funcName arguments const []
+        pure $ FuncDef returnType funcName arguments False []
     else do
         body <- between (char '{') (char '}') $ sepEndBy statementParser (many1 (char '\n'))
 
-        pure $ FuncDef returnType funcName arguments const body
+        pure $ FuncDef returnType funcName arguments False body
 
 typeParser :: CharParser st Type
 typeParser = do
-    const <- isConst
+    -- const <- isConst
 
     spaces
     typeName <- do
@@ -143,47 +157,65 @@ typeParser = do
     spaces
 
     spaces
-    varKindStr <- optionMaybe $ choice $ map try [char '&', char '*']
+    varKindStr <- optionMaybe $ char '*'
     spaces
 
     let varKind = case varKindStr of
                       Just '*' -> Pointer
                       Nothing -> Value
 
-    return $ Type const varKind typeName
+    return $ Type False varKind typeName
 
 statementParser :: CharParser st CStatement
-statementParser = try (Return <$> returnParser) <|>
+statementParser = do
+    val <- try (Return <$> returnParser) <|>
                   VarDef <$> varParser
+
+    -- Get semicolon at the end of the line.
+    char ';'
+
+    pure val
 
 varParser :: CharParser st Var
 varParser = do
     varType <- typeParser
     varName <- cIdentifier
 
-    optional (char ';')
-
     return $ Var varType varName
 
 returnParser :: CharParser st CExpression
 returnParser = do
+    spaces
     string "return"
     spaces
     expressionParser
 
 expressionParser :: CharParser st CExpression
-expressionParser = try (VarRef <$> cIdentifier) <|>
-                   cArithParser
+expressionParser = try cArithParser <|>
+                   try (VarRef <$> cIdentifier) <|>
+                   LitInt . read <$> many1 digit
+
+operandParser :: CharParser st CExpression
+operandParser = try (between (char '(') (char ')') expressionParser) <|>
+                try (VarRef <$> cIdentifier) <|>
+                LitInt . read <$> many1 digit
 
 cArithParser :: CharParser st CExpression
-cArithParser = do
-    n1 <- read <$> many1 digit
+cArithParser = try (cOpParser "+" CAdd) <|>
+               try (cOpParser "-" CMinus) <|>
+               try (cOpParser ">" CGT) <|>
+               try (cOpParser "<" CLT) <|>
+               try (cOpParser "==" CTestEq) <|>
+               try (cOpParser "<=" CLTE) <|>
+               try (cOpParser ">=" CGTE) <|>
+               try (cOpParser "!=" CNE) <|>
+               try (cOpParser "*" CMult) <|>
+               try (cOpParser "/" CDiv) <|>
+               cOpParser "%" CMod
 
-    spaces
-    char '+'
-    spaces
+cOpParser :: String -> (CExpression -> CExpression -> CExpression) -> CharParser st CExpression
+cOpParser op const = do
+    operands <- sepBy1 operandParser (spaces >> string op >> spaces)
 
-    n2 <- read <$> many1 digit
-
-    pure $ CAdd (LitInt n1) (LitInt n2)
+    pure $ foldl1 const operands
 
