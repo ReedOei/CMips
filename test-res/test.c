@@ -3,8 +3,10 @@ int f(int x) {
 
     if (x == 0) {
         y = x;
-    } else {
+    } else if (x > 0) {
         y = x + 1;
+    } else {
+        y = x / 2;
     }
 
     return y;
