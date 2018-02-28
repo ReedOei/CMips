@@ -42,6 +42,7 @@ data CElement = Preprocessor PreKind String
 
 data CStatement = Return CExpression
                 | VarDef Var
+                | IfStatement CExpression [CStatement]
     deriving (Show, Eq)
 
 data CExpression = VarRef String
@@ -94,7 +95,7 @@ cIdentifier = do
 
 commentParser :: CharParser st CElement
 commentParser = do
-    spaces
+    wsSkip
     string "//"
     many (noneOf "\n")
     return MiscElement
@@ -113,7 +114,7 @@ preprocessorParser = do
                     "endif" -> EndIf
                     _ -> MiscPreKind
 
-    spaces
+    wsSkip
 
     val <- many (noneOf "\n")
 
@@ -121,25 +122,25 @@ preprocessorParser = do
 
 isConst :: CharParser st Bool
 isConst = do
-    spaces
+    wsSkip
     constM <- optionMaybe $ string "const"
-    spaces
+    wsSkip
 
     return $ isJust constM
 
 functionParser :: CharParser st CElement
 functionParser = do
     returnType <- typeParser
-    spaces
+    wsSkip
 
     funcName <- cIdentifier
 
     arguments <- between (char '(') (char ')') $ sepBy (try varParser) (char ',')
 
-    spaces
+    wsSkip
 
     -- const <- isConst
-    spaces
+    wsSkip
     next <- lookAhead (choice [char ';', char '{'])
 
     if next == ';' then do
@@ -147,7 +148,7 @@ functionParser = do
 
         pure $ FuncDef returnType funcName arguments False []
     else do
-        body <- between (char '{') (char '}') $ sepEndBy statementParser (many1 (char '\n'))
+        body <- block
 
         pure $ FuncDef returnType funcName arguments False body
 
@@ -155,16 +156,16 @@ typeParser :: CharParser st Type
 typeParser = do
     -- const <- isConst
 
-    spaces
+    wsSkip
     typeName <- do
         t <- cIdentifier
         notFollowedBy (char '(')
         return t
-    spaces
+    wsSkip
 
-    spaces
+    wsSkip
     varKindStr <- optionMaybe $ char '*'
-    spaces
+    wsSkip
 
     let varKind = case varKindStr of
                       Just '*' -> Pointer
@@ -174,11 +175,17 @@ typeParser = do
 
 statementParser :: CharParser st CStatement
 statementParser = do
-    val <- try (Return <$> returnParser) <|>
-                  VarDef <$> varParser
+    wsSkip
+    val <- try returnParser <|>
+           try (VarDef <$> varParser) <|>
+           ifStatementParser
+
+    wsSkip
 
     -- Get semicolon at the end of the line.
-    char ';'
+    optional (char ';')
+
+    wsSkip
 
     pure val
 
@@ -189,12 +196,47 @@ varParser = do
 
     return $ Var varType varName
 
-returnParser :: CharParser st CExpression
+returnParser :: CharParser st CStatement
 returnParser = do
-    spaces
+    wsSkip
     string "return"
-    spaces
-    expressionParser
+    wsSkip
+    Return <$> expressionParser
+
+ifStatementParser :: CharParser st CStatement
+ifStatementParser = do
+    wsSkip
+    string "if"
+
+    wsSkip
+    condition <- between (char '(') (char ')') expressionParser
+    wsSkip
+
+    body <- block
+
+    pure $ IfStatement condition body
+
+wsSkip :: CharParser st ()
+wsSkip = do
+    _ <- many (oneOf " \t")
+
+    pure ()
+
+newlines :: CharParser st ()
+newlines = many1 (wsSkip >> char '\n' >> wsSkip) >> pure ()
+
+block :: CharParser st [CStatement]
+block = do
+    wsSkip
+    res <- between (char '{') (char '}') innerBlock
+    wsSkip
+    pure res
+
+    where innerBlock = do
+            optional newlines
+            statements <- sepEndBy statementParser newlines
+            optional newlines
+            pure statements
 
 expressionParser :: CharParser st CExpression
 expressionParser = try cArithParser <|>
@@ -240,9 +282,9 @@ opParser :: CharParser st [(CExpression, Maybe String)]
 opParser = do
     a <- operandParser
 
-    spaces
+    wsSkip
     nextOp <- optionMaybe $ choice $ map (try . string . fst) cArithOps
-    spaces
+    wsSkip
 
     case nextOp of
         Nothing -> pure [(a, Nothing)]
