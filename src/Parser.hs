@@ -200,22 +200,40 @@ operandParser = try (between (char '(') (char ')') expressionParser) <|>
                 try (VarRef <$> cIdentifier) <|>
                 LitInt . read <$> many1 digit
 
+cArithOps = [("+", CAdd), ("-", CMinus), (">", CGT), ("<", CLT), ("==", CTestEq),
+             ("<=", CLTE), (">=", CGTE), ("!=", CNE), ("*", CMult), ("/", CDiv), ("%", CMod)]
+
+resolve :: [(CExpression, Maybe String)] -> Maybe CExpression
+resolve [(final, Just op)] = Nothing -- Shouldn't find
+resolve [(final, Nothing)] = Just final
+resolve ((a,Nothing):_) = Nothing
+resolve ((a,Just op):rest) =
+    case lookup op cArithOps of
+        Nothing -> Nothing
+        Just f -> f a <$> resolve rest
+
 cArithParser :: CharParser st CExpression
-cArithParser = try (cOpParser "+" CAdd) <|>
-               try (cOpParser "-" CMinus) <|>
-               try (cOpParser ">" CGT) <|>
-               try (cOpParser "<" CLT) <|>
-               try (cOpParser "==" CTestEq) <|>
-               try (cOpParser "<=" CLTE) <|>
-               try (cOpParser ">=" CGTE) <|>
-               try (cOpParser "!=" CNE) <|>
-               try (cOpParser "*" CMult) <|>
-               try (cOpParser "/" CDiv) <|>
-               cOpParser "%" CMod
+cArithParser = do
+    arith <- opParser
 
-cOpParser :: String -> (CExpression -> CExpression -> CExpression) -> CharParser st CExpression
-cOpParser op const = do
-    operands <- sepBy1 operandParser (spaces >> string op >> spaces)
+    case resolve arith of
+        Nothing -> fail $ "Could not resolve '" ++ show arith ++ "' into an expression."
+        Just expr -> pure expr
 
-    pure $ foldl1 const operands
+opParser :: CharParser st [(CExpression, Maybe String)]
+opParser = do
+    a <- operandParser
+
+    spaces
+    nextOp <- optionMaybe $ choice $ map (try . string . fst) cArithOps
+    spaces
+
+    case nextOp of
+        Nothing -> pure [(a, Nothing)]
+        Just op -> do
+            rest <- optionMaybe opParser
+
+            case rest of
+                Nothing -> pure [(a,Just op)]
+                Just vs -> pure $ (a,Just op):vs
 
