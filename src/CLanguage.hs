@@ -50,24 +50,18 @@ data PostfixOp = PostIncrement
                | PostDecrement
     deriving (Show, Eq)
 
+data BinaryOp = Add | Minus | CGT | CLT | CGTE | CLTE | CNE | CEQ |
+                Div | Mod | Xor | Or | And | OrBit | AndBit | ShiftLeft |
+                ShiftRight | Mult
+    deriving (Show, Eq)
+
 data CExpression = VarRef String
                  | LitInt Int
                  | FuncCall String [CExpression]
                  | CPrefix PrefixOp CExpression
                  | CPostfix PostfixOp CExpression
                  | CArrayAccess String CExpression
-                 | CAdd CExpression CExpression
-                 | CMinus CExpression CExpression
-                 | CGT CExpression CExpression
-                 | CLT CExpression CExpression
-                 | CTestEq CExpression CExpression
-                 | CLTE CExpression CExpression
-                 | CGTE CExpression CExpression
-                 | CNE CExpression CExpression
-                 | CMult CExpression CExpression
-                 | CDiv CExpression CExpression
-                 | CMod CExpression CExpression
-                 | CXor CExpression CExpression
+                 | CBinaryOp BinaryOp CExpression CExpression
     deriving (Show, Eq)
 
 data CFile = CFile String [CElement]

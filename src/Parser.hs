@@ -290,7 +290,7 @@ cPrefixOps = [("++", PreIncrement), ("--", PreDecrement), ("!", PreNot), ("*", D
 prefixParser :: CharParser st CExpression
 prefixParser = do
     op <- choice $ map (try . string . fst) cPrefixOps
-
+    wsSkip
     expr <- operandParser
 
     case lookup op cPrefixOps of
@@ -302,16 +302,18 @@ cPostfixOps = [("++", PostIncrement), ("--", PostDecrement)]
 postfixParser :: CharParser st CExpression
 postfixParser = do
     expr <- operandParser
-
+    wsSkip
     op <- choice $ map (try . string . fst) cPostfixOps
 
     case lookup op cPostfixOps of
         Nothing -> fail $ "Unknown postfix operation: " ++ op
         Just postfixOp -> pure $ CPostfix postfixOp expr
 
-cArithOps = [("%", CMod), ("*", CMult), ("/", CDiv), ("+", CAdd), ("-", CMinus),
-             (">", CGT), ("<", CLT), ("==", CTestEq), ("<=", CLTE), (">=", CGTE), ("!=", CNE),
-             ("^", CXor)]
+cArithOps = [("+", CBinaryOp Add), ("-", CBinaryOp Minus), (">", CBinaryOp CGT), ("<", CBinaryOp CLT),
+             (">=", CBinaryOp CGTE), ("<=", CBinaryOp CLTE), ("!=", CBinaryOp CNE), ("==", CBinaryOp CEQ),
+             ("/", CBinaryOp Div), ("%", CBinaryOp Mod), ("||", CBinaryOp Or), ("&&", CBinaryOp And),
+             ("|", CBinaryOp OrBit), ("&", CBinaryOp AndBit), ("<<", CBinaryOp ShiftLeft), (">>", CBinaryOp ShiftRight),
+             ("*", CBinaryOp Mult)]
 
 extractExprOp :: (CExpression, Maybe String) -> Maybe (CExpression, CExpression -> CExpression -> CExpression)
 extractExprOp (expr, op) = (expr,) <$> (op >>= (`lookup` cArithOps))
