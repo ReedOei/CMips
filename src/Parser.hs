@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 
 module Parser where
     -- (
@@ -7,11 +8,16 @@ module Parser where
     --     CElement, Var, Type, PreKind, VarKind
     -- ) where
 
-import Data.Maybe (isJust)
+import Control.Arrow
+import Control.Monad
+
+import Data.Maybe (isJust, maybe)
 
 import Text.ParserCombinators.Parsec
 
 import System.IO.Unsafe
+
+import Util (findSplit, maybePred)
 
 data VarKind = Pointer | Value
     deriving (Show, Eq)
@@ -200,25 +206,35 @@ operandParser = try (between (char '(') (char ')') expressionParser) <|>
                 try (VarRef <$> cIdentifier) <|>
                 LitInt . read <$> many1 digit
 
-cArithOps = [("+", CAdd), ("-", CMinus), (">", CGT), ("<", CLT), ("==", CTestEq),
-             ("<=", CLTE), (">=", CGTE), ("!=", CNE), ("*", CMult), ("/", CDiv), ("%", CMod)]
+cArithOps = [("%", CMod), ("*", CMult), ("/", CDiv), ("+", CAdd), ("-", CMinus),
+             (">", CGT), ("<", CLT), ("==", CTestEq), ("<=", CLTE), (">=", CGTE), ("!=", CNE)]
 
-resolve :: [(CExpression, Maybe String)] -> Maybe CExpression
-resolve [(final, Just op)] = Nothing -- Shouldn't find
-resolve [(final, Nothing)] = Just final
-resolve ((a,Nothing):_) = Nothing
-resolve ((a,Just op):rest) =
-    case lookup op cArithOps of
-        Nothing -> Nothing
-        Just f -> f a <$> resolve rest
+extractExprOp :: (CExpression, Maybe String) -> Maybe (CExpression, CExpression -> CExpression -> CExpression)
+extractExprOp (expr, op) = (expr,) <$> (op >>= (`lookup` cArithOps))
+
+resolve :: [String] -> [(CExpression, Maybe String)] -> Maybe (CExpression, Maybe String)
+resolve _ [] = Nothing
+resolve _ [x] = Just x
+resolve [] _ = Nothing
+resolve (op:ops) arith =
+    -- Split the arithmetic expression with the highest precedence operator.
+    case findSplit (maybePred (== op) . snd) arith of
+        Nothing -> resolve ops arith
+        Just (left, (cur,_), right) ->
+            let l = extractExprOp =<< resolve (op:ops) left
+                r = resolve (op:ops) right in
+                case lookup op cArithOps of
+                    Nothing -> Nothing
+                    Just f -> let (new, lastOp) = maybe (cur, Nothing) (first (cur `f`)) r in
+                                  maybe (Just (new, lastOp)) (\(expr, lf) -> Just (expr `lf` new, lastOp)) l
 
 cArithParser :: CharParser st CExpression
 cArithParser = do
     arith <- opParser
 
-    case resolve arith of
-        Nothing -> fail $ "Could not resolve '" ++ show arith ++ "' into an expression."
-        Just expr -> pure expr
+    case resolve (map fst cArithOps) arith of
+        Just (expr, Nothing) -> pure expr
+        _ -> error $ "Could not resolve '" ++ show arith ++ "' into an expression."
 
 opParser :: CharParser st [(CExpression, Maybe String)]
 opParser = do
