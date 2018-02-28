@@ -10,16 +10,6 @@ data PreKind = Include
              | MiscPreKind
     deriving (Show, Eq)
 
-data AssignKind = AssignNormal
-                | AssignAdd
-                | AssignOr
-                | AssignAnd
-                | AssignMinus
-                | AssignMult
-                | AssignDiv
-                | AssignXor
-    deriving (Show, Eq)
-
 data Type = Type Bool VarKind String
     deriving (Show, Eq)
 
@@ -35,8 +25,8 @@ data CStatement = Return CExpression
                 | VarDef Var (Maybe CExpression)
                 | IfStatement CExpression [CStatement]
                 | WhileStatement CExpression [CStatement]
-                | ForStatement CStatement CExpression CExpression [CStatement]
-                | Assign AssignKind String CExpression
+                | ForStatement CStatement CExpression CStatement [CStatement]
+                | Assign (Maybe BinaryOp) (Either String CExpression) CExpression
                 | ExprStatement CExpression
     deriving (Show, Eq)
 
@@ -58,8 +48,8 @@ data BinaryOp = Add | Minus | CGT | CLT | CGTE | CLTE | CNE | CEQ |
 data CExpression = VarRef String
                  | LitInt Int
                  | FuncCall String [CExpression]
-                 | CPrefix PrefixOp CExpression
-                 | CPostfix PostfixOp CExpression
+                 | CPrefix PrefixOp String
+                 | CPostfix PostfixOp String
                  | CArrayAccess String CExpression
                  | CBinaryOp BinaryOp CExpression CExpression
     deriving (Show, Eq)

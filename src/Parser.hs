@@ -20,15 +20,13 @@ import System.IO.Unsafe
 import CLanguage
 import Util (findSplit, maybePred)
 
-loadFile :: String -> IO (Maybe CFile)
+loadFile :: String -> IO CFile
 loadFile filename = do
     contents <- filter (/= '\r') <$> readFile filename
 
     case parse (fileParser filename) "Error: " contents of
-      Left err -> do
-          print err
-          return Nothing
-      Right file -> return $ Just file
+      Left err -> error $ show err
+      Right file -> return file
 
 fileParser :: String -> CharParser st CFile
 fileParser filename = CFile filename <$> cElementList
@@ -136,9 +134,9 @@ statementParser = do
     val <- try returnParser <|>
            try varDefParser <|>
            try whileStatementParser <|>
-           try assignParser <|>
            try ifStatementParser <|>
            try forStatementParser <|>
+           try assignParser <|>
            ExprStatement <$> expressionParser
 
     wsSkip
@@ -178,20 +176,19 @@ returnParser = do
     wsSkip
     Return <$> expressionParser
 
-assignKinds = [("=", AssignNormal), ("+=", AssignAdd), ("-=", AssignMinus), ("*=", AssignMult),
-               ("|=", AssignOr), ("&=", AssignAnd), ("/=", AssignDiv), ("^=", AssignXor)]
-
 assignParser :: CharParser st CStatement
 assignParser = do
-    lhs <- cIdentifier
+    lhs <- try (Right <$> arrayAccessParser) <|>
+           Left <$> cIdentifier
     wsSkip
-    assignOp <- choice $ map (try . string . fst) assignKinds
+    assignOp <- optionMaybe $ choice $ map (try . string . fst) cArithOps
+    char '='
     wsSkip
     rhs <- expressionParser
 
-    case lookup assignOp assignKinds of
-        Nothing -> fail $ "Unknown assign operator: " ++ assignOp
-        Just op -> pure $ Assign op lhs rhs
+    case assignOp of
+        Nothing -> pure $ Assign Nothing lhs rhs
+        Just opName -> pure $ Assign (lookup opName cArithOps) lhs rhs
 
 ifStatementParser = conditionStatementParser "if" IfStatement
 whileStatementParser = conditionStatementParser "while" WhileStatement
@@ -227,7 +224,7 @@ forStatementParser = do
             wsSkip
             char ';'
             wsSkip
-            step <- expressionParser
+            step <- statementParser
             wsSkip
 
             pure (ini, cond, step)
@@ -291,32 +288,34 @@ prefixParser :: CharParser st CExpression
 prefixParser = do
     op <- choice $ map (try . string . fst) cPrefixOps
     wsSkip
-    expr <- operandParser
+    var <- cIdentifier
 
     case lookup op cPrefixOps of
         Nothing -> fail $ "Unknown prefix operation: " ++ op
-        Just prefixOp -> pure $ CPrefix prefixOp expr
+        Just prefixOp -> pure $ CPrefix prefixOp var
 
 cPostfixOps = [("++", PostIncrement), ("--", PostDecrement)]
 
 postfixParser :: CharParser st CExpression
 postfixParser = do
-    expr <- operandParser
+    var <- cIdentifier
     wsSkip
     op <- choice $ map (try . string . fst) cPostfixOps
 
     case lookup op cPostfixOps of
         Nothing -> fail $ "Unknown postfix operation: " ++ op
-        Just postfixOp -> pure $ CPostfix postfixOp expr
+        Just postfixOp -> pure $ CPostfix postfixOp var
 
-cArithOps = [("+", CBinaryOp Add), ("-", CBinaryOp Minus), (">", CBinaryOp CGT), ("<", CBinaryOp CLT),
-             (">=", CBinaryOp CGTE), ("<=", CBinaryOp CLTE), ("!=", CBinaryOp CNE), ("==", CBinaryOp CEQ),
-             ("/", CBinaryOp Div), ("%", CBinaryOp Mod), ("||", CBinaryOp Or), ("&&", CBinaryOp And),
-             ("|", CBinaryOp OrBit), ("&", CBinaryOp AndBit), ("<<", CBinaryOp ShiftLeft), (">>", CBinaryOp ShiftRight),
-             ("*", CBinaryOp Mult)]
+cArithOps = [("*", Mult), ("/", Div), ("+", Add), ("-", Minus),
+             (">=", CGTE), ("<=", CLTE), ("!=", CNE), ("==", CEQ),
+             ("/", Div), ("%", Mod), ("||", Or), ("&&", And),
+             ("|", OrBit), ("&", AndBit), ("<<", ShiftLeft), (">>", ShiftRight),
+             ("^", Xor), (">", CGT), ("<", CLT)]
+
+cArithBinary = map (second CBinaryOp) cArithOps
 
 extractExprOp :: (CExpression, Maybe String) -> Maybe (CExpression, CExpression -> CExpression -> CExpression)
-extractExprOp (expr, op) = (expr,) <$> (op >>= (`lookup` cArithOps))
+extractExprOp (expr, op) = (expr,) <$> (op >>= (`lookup` cArithBinary))
 
 resolve :: [String] -> [(CExpression, Maybe String)] -> Maybe (CExpression, Maybe String)
 resolve _ [] = Nothing
@@ -329,7 +328,7 @@ resolve (op:ops) arith =
         Just (left, (cur,_), right) ->
             let l = extractExprOp =<< resolve (op:ops) left
                 r = resolve (op:ops) right in
-                case lookup op cArithOps of
+                case lookup op cArithBinary of
                     Nothing -> Nothing
                     Just f -> let (new, lastOp) = maybe (cur, Nothing) (first (cur `f`)) r in
                                   maybe (Just (new, lastOp)) (\(expr, lf) -> Just (expr `lf` new, lastOp)) l
@@ -338,7 +337,7 @@ cArithParser :: CharParser st CExpression
 cArithParser = do
     arith <- opParser
 
-    case resolve (map fst cArithOps) arith of
+    case resolve (map fst cArithBinary) arith of
         Just (expr, Nothing) -> pure expr
         _ -> error $ "Could not resolve '" ++ show arith ++ "' into an expression."
 
@@ -347,7 +346,7 @@ opParser = do
     a <- operandParser
 
     wsSkip
-    nextOp <- optionMaybe $ choice $ map (try . string . fst) cArithOps
+    nextOp <- optionMaybe $ choice $ map (try . string . fst) cArithBinary
     wsSkip
 
     case nextOp of
