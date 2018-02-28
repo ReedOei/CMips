@@ -176,15 +176,19 @@ returnParser = do
     wsSkip
     Return <$> expressionParser
 
+assignKinds = [("=", AssignNormal)]
+
 assignParser :: CharParser st CStatement
 assignParser = do
     lhs <- cIdentifier
     wsSkip
-    char '='
+    assignOp <- choice $ map (try . string . fst) assignKinds
     wsSkip
     rhs <- expressionParser
 
-    pure $ Assign Normal lhs rhs
+    case lookup assignOp assignKinds of
+        Nothing -> fail $ "Unknown assign operator: " ++ assignOp
+        Just op -> pure $ Assign op lhs rhs
 
 ifStatementParser = conditionStatementParser "if" IfStatement
 whileStatementParser = conditionStatementParser "while" WhileStatement
@@ -227,10 +231,19 @@ block = do
 expressionParser :: CharParser st CExpression
 expressionParser = try cArithParser <|>
                    try (VarRef <$> cIdentifier) <|>
+                   try arrayAccessParser <|>
                    LitInt . read <$> many1 digit
+
+arrayAccessParser :: CharParser st CExpression
+arrayAccessParser = do
+    name <- cIdentifier
+    expr <- between (char '[') (char ']') expressionParser
+
+    pure $ CArrayAccess name expr
 
 operandParser :: CharParser st CExpression
 operandParser = try (between (char '(') (char ')') expressionParser) <|>
+                try arrayAccessParser <|>
                 try (VarRef <$> cIdentifier) <|>
                 LitInt . read <$> many1 digit
 

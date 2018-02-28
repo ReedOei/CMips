@@ -37,6 +37,16 @@ main = hspec $ do
         it "parses empty blocks correctly" $
             parse block "" "{}" `shouldBe` Right []
 
+    describe "arrayAccessParser" $ do
+        it "parses an array access expression without error" $
+            parse arrayAccessParser "" "arr[i]" `shouldSatisfy` isRight
+
+        it "parses an array access expression correctly" $
+            parse arrayAccessParser "" "arr[i]" `shouldBe` Right (CArrayAccess "arr" (VarRef "i"))
+
+        it "parses array access expressions with sub expressions" $
+            parse arrayAccessParser "" "arr[arr2[i] + 4]" `shouldBe` Right (CArrayAccess "arr" (CAdd (CArrayAccess "arr2" (VarRef "i")) (LitInt 4)))
+
     describe "cArithParser" $ do
         it "parses arithmetic expressions without error" $
             parse cArithParser "" "n + 2" `shouldSatisfy` isRight
@@ -63,3 +73,4 @@ main = hspec $ do
 
         it "handles operator precedence when working with repeated operators" $
             resolve (map fst cArithOps) [(VarRef "n",Just "+"),(LitInt 2,Just "+"),(LitInt 6,Nothing)] `shouldBe` Just (CAdd (VarRef "n") (CAdd (LitInt 2) (LitInt 6)),Nothing)
+

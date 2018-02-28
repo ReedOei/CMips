@@ -10,7 +10,7 @@ data PreKind = Include
              | MiscPreKind
     deriving (Show, Eq)
 
-data AssignKind = Normal
+data AssignKind = AssignNormal
     deriving (Show, Eq)
 
 data Type = Type Bool VarKind String
@@ -33,6 +33,7 @@ data CStatement = Return CExpression
 
 data CExpression = VarRef String
                  | LitInt Int
+                 | CArrayAccess String CExpression
                  | CAdd CExpression CExpression
                  | CMinus CExpression CExpression
                  | CGT CExpression CExpression
