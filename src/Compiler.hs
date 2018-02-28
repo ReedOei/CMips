@@ -8,6 +8,8 @@ import Data.Maybe (fromMaybe)
 import CLanguage
 import MIPSLanguage
 
+import System.IO.Unsafe
+
 data Environment = Environment CFile Global Local
     deriving Show
 
@@ -40,7 +42,10 @@ getRegister varName (Local registers) =
 getNextLabel :: Global -> String -> (Global, String)
 getNextLabel (Global labels funcs) labelType = (Global (newLabel:labels) funcs, newLabel)
     where n = length $ filter (labelType `isPrefixOf`) labels
-          newLabel = labelType ++ "_" ++ show n
+          newLabel = if n > 0 then
+                        labelType ++ "_" ++ show n
+                     else
+                        labelType
 
 funcLabel :: Global -> String -> (Global, String)
 funcLabel global funcName = (Global labels (Map.insert funcName funcLabel funcs), funcLabel)
@@ -164,9 +169,9 @@ compileStatement env@(Environment file global local) (Assign assignKind lhs rhs)
           (reg, accessInstr) =
                 case lhs of
                     Left varName -> (getRegister varName local, [])
-                    Right (CArrayAccess varName expr) ->
+                    Right expr@(CArrayAccess _ _) ->
                         let (_, dest, accessInstr) = compileExpressionTemp env expr in
-                            (dest, accessInstr)
+                            (dest, init accessInstr ++ [Inst OP_SW source "0" dest])
 
 compileStatement env (ExprStatement expr) =
     let (newEnv, _, instr) = compileExpressionTemp env expr in
