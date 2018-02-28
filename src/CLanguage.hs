@@ -58,3 +58,9 @@ data CExpression = VarRef String
 data CFile = CFile String [CElement]
     deriving Show
 
+readable :: CStatement -> String
+readable (ExprStatement expr) = readableExpr expr
+
+readableExpr :: CExpression -> String
+readableExpr (LitInt n) = show n
+

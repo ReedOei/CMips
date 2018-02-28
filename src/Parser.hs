@@ -214,6 +214,7 @@ ifStatementParser = do
 
     body <- block
 
+    -- Get other branches.
     branches <- optionMaybe $ (wsSkip >> string "else" >> wsSkip >> (try (ElseBlock <$> block) <|> try ifStatementParser))
 
     pure $ IfStatement condition branches body

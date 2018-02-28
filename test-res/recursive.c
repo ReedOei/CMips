@@ -6,3 +6,11 @@ int mySum(int n, int k) {
     return n + mySum(n + 1, k);
 }
 
+int fib(int n) {
+    if (n <= 1) {
+        return n;
+    } else {
+        return fib(n - 1) + fib(n - 2);
+    }
+}
+

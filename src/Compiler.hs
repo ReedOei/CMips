@@ -118,6 +118,26 @@ compileCondition falseLabel env (CBinaryOp op a b) = (bEnv, aInstr ++ bInstr ++ 
           (aEnv, aReg, aInstr) = compileExpressionTemp env a
           (bEnv, bReg, bInstr) = compileExpressionTemp aEnv b
 
+-- Returns the label to go to in order to skip this block.
+handleIfStatement :: Environment -> CStatement -> (Environment, String, [MIPSInstruction])
+handleIfStatement (Environment file global local) (ElseBlock statements) = (newEnv, labelEnd, instr ++ [Label labelEnd])
+    where (newGlobal, labelEnd) = getNextLabel global "else"
+          (newEnv, instr) = compileStatements (Environment file newGlobal local) statements
+
+handleIfStatement (Environment file global local) (IfStatement cond branches body) =
+    (purgeRegTypeEnv "t" branchEnv, labelEnd,
+     Label labelStart : instr ++ bodyInstr ++ [Label labelEnd] ++ branchInstr)
+    where (globalLabelStart, labelStart) = getNextLabel global "if"
+          (newGlobal, labelEnd) = getNextLabel globalLabelStart "if_end"
+          (newEnv, instr) = compileCondition labelEnd (Environment file newGlobal local) cond
+          (finalEnv, bodyInstr) = compileStatements newEnv body
+          (branchEnv, branchInstr) =
+            case branches of
+                Nothing -> (finalEnv, bodyInstr)
+                Just branch ->
+                    let (env, branchEnd, instrs) = handleIfStatement finalEnv branch in
+                        (env, Inst OP_J branchEnd "" "" : instrs) -- Make sure to skip this branch.
+
 ----------------------------------
 -- Compile statements
 ----------------------------------
@@ -133,13 +153,8 @@ compileStatement (Environment file global local) (VarDef (Var (Type isConst varK
 
     where (newLocal, reg) = useNextRegister "s" varName local
 
-compileStatement (Environment file global local) (IfStatement cond _ body) =
-    (purgeRegTypeEnv "t" finalEnv,
-     Label labelStart : instr ++ bodyInstr ++ [Label labelEnd])
-    where (globalLabelStart, labelStart) = getNextLabel global "if"
-          (newGlobal, labelEnd) = getNextLabel globalLabelStart "if_end"
-          (newEnv, instr) = compileCondition labelEnd (Environment file newGlobal local) cond
-          (finalEnv, bodyInstr) = compileStatements newEnv body
+compileStatement env ifStatement@IfStatement{} = (newEnv, instr)
+    where (newEnv, _, instr) = handleIfStatement env ifStatement
 
 compileStatement (Environment file global local) (WhileStatement cond body) =
     (purgeRegTypeEnv "t" finalEnv,

@@ -1,16 +1,12 @@
-int square(int x) {
-    return x*x;
-}
+int f(int x) {
+    int y = 0;
 
-int f(int *x) {
-    int i = 0;
-    int test = 0;
-
-    for (int i = 0; i < 10; i++) {
-        x[i] = square(i);
-        test += x[i];
+    if (x == 0) {
+        y = x;
+    } else {
+        y = x + 1;
     }
 
-    return i;
+    return y;
 }
 
