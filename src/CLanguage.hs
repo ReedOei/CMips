@@ -99,14 +99,14 @@ maybeOp Nothing = ""
 maybeOp (Just op) = readableOp op
 
 readable :: CStatement -> String
-readable (ExprStatement expr) = readableExpr expr
+readable (ExprStatement expr) = readableExpr expr ++ ";"
 readable (Return expr) = "return " ++ readableExpr expr ++ ";"
 readable (VarDef var Nothing) = readableVar var ++ ";"
 readable (VarDef var (Just ini)) = readableVar var ++ " = " ++ readableExpr ini ++ ";"
 readable (IfStatement cond _ _) = "if (" ++ readableExpr cond ++ ")"
 readable (ElseBlock _) = "else"
 readable (WhileStatement cond _) = "while (" ++ readableExpr cond ++ ")"
-readable (ForStatement ini cond step _) = "for (" ++ readable ini ++ "; " ++ readableExpr cond ++ "; " ++ readable step ++ ")"
+readable (ForStatement ini cond step _) = "for (" ++ readable ini ++ " " ++ readableExpr cond ++ "; " ++ init (readable step) ++ ")"
 readable (Assign op (Left varName) expr) = varName ++ " " ++ maybeOp op ++ "= " ++ readableExpr expr ++ ";"
 readable (Assign op (Right access) expr) = readableExpr access ++ " " ++ maybeOp op ++ "= " ++ readableExpr expr ++ ";"
 

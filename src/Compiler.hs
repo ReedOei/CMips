@@ -162,13 +162,13 @@ compileCondition falseLabel env expr = compileCondition falseLabel env (CBinaryO
 -- Returns the label to go to in order to skip this block.
 handleIfStatement :: Environment -> CStatement -> (Environment, String, [MIPSInstruction])
 handleIfStatement (Environment file global local) st@(ElseBlock statements) =
-    (newEnv, labelEnd, Comment (readable st) : instr ++ [Label labelEnd])
+    (newEnv, labelEnd, Empty : Comment (readable st) : instr ++ [Label labelEnd])
     where (newGlobal, labelEnd) = getNextLabel global "else_end"
           (newEnv, instr) = compileStatements (Environment file newGlobal local) statements
 
 handleIfStatement (Environment file global local) st@(IfStatement cond branches body) =
     (purgeRegTypeEnv "t" branchEnv, labelEnd,
-     [Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ branchInstr)
+     [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ branchInstr)
     where (globalLabelStart, labelStart) = getNextLabel global "if"
           (newGlobal, labelEnd) = getNextLabel globalLabelStart "if_end"
           (newEnv, instr) = compileCondition labelEnd (Environment file newGlobal local) cond
@@ -187,11 +187,11 @@ compileStatement :: Environment -> CStatement -> (Environment, [MIPSInstruction]
 compileStatement (Environment file global local) st@(VarDef (Var (Type varKind typeName) varName) ini) =
     case ini of
         -- If there's no initializer, all we need to do is take note of the fact that this variable exists
-        Nothing -> (Environment file global newLocal, [Comment (readable st)])
-        Just (LitInt n) -> (Environment file global newLocal, [Comment (readable st), Inst OP_LI reg (show n) ""])
+        Nothing -> (Environment file global newLocal, [Empty, Comment (readable st)])
+        Just (LitInt n) -> (Environment file global newLocal, [Empty, Comment (readable st), Inst OP_LI reg (show n) ""])
         Just initializer ->
             let (newEnv, source, instructions) = compileExpressionTemp (Environment file global newLocal) initializer in
-                (purgeRegTypeEnv "t" newEnv, Comment (readable st) : instructions ++ [Inst OP_MOVE reg source ""])
+                (purgeRegTypeEnv "t" newEnv, Empty : Comment (readable st) : instructions ++ [Inst OP_MOVE reg source ""])
 
     where (newLocal, reg) = useNextRegister "s" varName local
 
@@ -200,26 +200,26 @@ compileStatement env ifStatement@IfStatement{} = (newEnv, instr)
 
 compileStatement (Environment file global local) st@(WhileStatement cond body) =
     (purgeRegTypeEnv "t" finalEnv,
-     [Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ [Inst OP_J labelStart "" "", Label labelEnd])
+     [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ [Inst OP_J labelStart "" "", Label labelEnd])
     where (globalLabelStart, labelStart) = getNextLabel global "while"
           (newGlobal, labelEnd) = getNextLabel globalLabelStart "while_end"
           (newEnv, instr) = compileCondition labelEnd (Environment file newGlobal local) cond
           (finalEnv, bodyInstr) = compileStatements newEnv body
 
 compileStatement env st@(ForStatement ini cond step body) =
-    (purgeRegTypeEnv "t" finalEnv, Comment (readable st): instrIni ++ instr)
+    (purgeRegTypeEnv "t" finalEnv, Empty : Comment (readable st): instrIni ++ instr)
     where (newEnv, instrIni) = compileStatement env ini
           (finalEnv, instr) = compileStatement newEnv (WhileStatement cond (body ++ [step]))
 
 compileStatement env st@(Return expr) =
     (purgeRegTypeEnv "t" newEnv,
-     Comment (readable st) : instr ++ [Inst OP_MOVE "v0" source "", Inst OP_J funcEnd "" ""])
+     Empty : Comment (readable st) : instr ++ [Inst OP_MOVE "v0" source "", Inst OP_J funcEnd "" ""])
      where (newEnv@(Environment _ global _), source, instr) = compileExpressionTemp env expr
            (_, funcEnd) = getFuncLabel (getCurFunc global) global
 
 compileStatement env@(Environment file global local) st@(Assign assignKind lhs rhs) =
     (purgeRegTypeEnv "t" newEnv,
-     Comment (readable st) : accessInstr ++ instr ++ postAccessInstr)
+     Empty : Comment (readable st) : accessInstr ++ instr ++ postAccessInstr)
     where
         assignOp = case assignKind of
                 Nothing -> Inst OP_MOVE reg source ""
@@ -237,7 +237,7 @@ compileStatement env@(Environment file global local) st@(Assign assignKind lhs r
 
 compileStatement env st@(ExprStatement expr) =
     let (newEnv, _, instr) = compileExpressionTemp env expr in
-        (purgeRegTypeEnv "t" newEnv, Comment (readable st) : instr)
+        (purgeRegTypeEnv "t" newEnv, Empty : Comment (readable st) : instr)
 
 ---------------------------------------------
 -- Compile Expression (using temp registers)
