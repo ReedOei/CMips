@@ -168,6 +168,7 @@ returnParser = do
 assignParser :: CharParser st CStatement
 assignParser = do
     lhs <- try (Right <$> arrayAccessParser) <|>
+           try (Right <$> prefixParser) <|>
            Left <$> cIdentifier
     wsSkip
     assignOp <- optionMaybe $ choice $ map (try . string . fst) cArithOps
@@ -179,14 +180,20 @@ assignParser = do
         Nothing -> pure $ Assign Nothing lhs rhs
         Just opName -> pure $ Assign (lookup opName cArithOps) lhs rhs
 
+conditionParser :: CharParser st CExpression
+conditionParser = do
+    wsSkip
+    condition <- between (char '(') (char ')') expressionParser
+    wsSkip
+
+    pure condition
+
 whileStatementParser :: CharParser st CStatement
 whileStatementParser = do
     wsSkip
     string "while"
 
-    wsSkip
-    condition <- between (char '(') (char ')') expressionParser
-    wsSkip
+    condition <- conditionParser
 
     body <- block
 
@@ -197,14 +204,12 @@ ifStatementParser = do
     wsSkip
     string "if"
 
-    wsSkip
-    condition <- between (char '(') (char ')') expressionParser
-    wsSkip
+    condition <- conditionParser
 
     body <- block
 
     -- Get other branches.
-    branches <- optionMaybe $ (wsSkip >> string "else" >> wsSkip >> (try (ElseBlock <$> block) <|> try ifStatementParser))
+    branches <- optionMaybe (wsSkip >> string "else" >> wsSkip >> (try (ElseBlock <$> block) <|> try ifStatementParser))
 
     pure $ IfStatement condition branches body
 
@@ -253,6 +258,15 @@ block = do
             optional newlines
             pure statements
 
+readNum :: Num a => CharParser st a
+readNum = do
+    isNegative <- optionMaybe $ char '-'
+    digits <- many1 digit
+
+    let sign = maybe 1 (const (-1)) isNegative
+
+    pure $ sign * fromInteger (read digits)
+
 expressionParser :: CharParser st CExpression
 expressionParser = try prefixParser <|>
                    try postfixParser <|>
@@ -260,7 +274,7 @@ expressionParser = try prefixParser <|>
                    try (VarRef <$> cIdentifier) <|>
                    try arrayAccessParser <|>
                    try funcCallParser <|>
-                   LitInt . read <$> many1 digit
+                   LitInt <$> readNum
 
 arrayAccessParser :: CharParser st CExpression
 arrayAccessParser = do

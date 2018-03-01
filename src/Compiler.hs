@@ -21,10 +21,11 @@ newtype Local = Local (Map String String) -- Map of registers to variable names.
     deriving Show
 
 sizeof :: Type -> Int
-sizeof (Type _ "unsigned int") = 4
-sizeof (Type _ "int") = 4
 sizeof (Type _ "char") = 1
 sizeof (Type _ "unsigned char") = 1
+sizeof (Type _ "unsigned int") = 4
+sizeof (Type _ "int") = 4
+sizeof _ = 4
 
 findTypesElement :: CElement -> [Var]
 findTypesElement (FuncDef _ _ vars statements) =
@@ -207,18 +208,22 @@ compileStatement env st@(Return expr) =
      where (newEnv, source, instr) = compileExpressionTemp env expr
 
 compileStatement env@(Environment file global local) st@(Assign assignKind lhs rhs) =
-    let assignOp = case assignKind of
+    (purgeRegTypeEnv "t" newEnv,
+     Comment (readable st) : accessInstr ++ instr ++ postAccessInstr)
+    where
+        assignOp = case assignKind of
                 Nothing -> Inst OP_MOVE reg source ""
-                Just op -> Inst (opFind op) reg reg source in
-        (purgeRegTypeEnv "t" newEnv,
-         Comment (readable st) : accessInstr ++ instr ++ [assignOp])
-    where (newEnv, source, instr) = compileExpressionTemp env rhs
-          (reg, accessInstr) =
+                Just op -> Inst (opFind op) reg reg source
+        (newEnv, source, instr) = compileExpressionTemp env rhs
+        (reg, accessInstr, postAccessInstr) =
                 case lhs of
-                    Left varName -> (getRegister varName local, [])
+                    Left varName -> (getRegister varName local, [], [assignOp])
                     Right expr@(CArrayAccess _ _) ->
                         let (_, dest, accessInstr) = compileExpressionTemp env expr in
-                            (dest, init accessInstr ++ [Inst OP_SW source "0" dest])
+                            (dest, init accessInstr, [Inst OP_SW source "0" dest])
+                    Right expr@(CPrefix Dereference (VarRef varName)) ->
+                        let tempReg = getRegister varName local in
+                            (tempReg, [], [Inst OP_SW source "0" tempReg])
 
 compileStatement env st@(ExprStatement expr) =
     let (newEnv, _, instr) = compileExpressionTemp env expr in
@@ -235,16 +240,14 @@ compileExpressionTemp (Environment file global local) (LitInt i) =
 
 compileExpressionTemp env (CArrayAccess varName expr) =
     (Environment file global newLocal, dest,
-     instr ++ offset ++
-               [Inst OP_ADD dest dest reg, -- Calculate address to load.
+     instr ++
+               [Inst OP_MUL dest source $ show size,
+                Inst OP_ADD dest dest reg, -- Calculate address to load.
                 Inst OP_LW dest "0" dest]) -- Load memory
     where (newEnv@(Environment file global local), source, instr) = compileExpressionTemp env expr
           (newLocal, dest) = useNextRegister "t" (varName ++ "_access") local
           (Var varType _) = resolve varName file
           size = sizeof varType
-          offset = case size of
-                    1 -> []
-                    _ -> [Inst OP_MUL dest source $ show size]
           reg = getRegister varName local
 
 compileExpressionTemp env (CBinaryOp op a b) =
@@ -258,8 +261,18 @@ compileExpressionTemp env@(Environment file global local) (CPrefix PreIncrement 
     where
         (newEnv, source, instr) = compileExpressionTemp env a
 
+compileExpressionTemp env@(Environment file global local) (CPrefix PreDecrement a) =
+    (Environment file global local, source, instr ++ [Inst OP_SUB source source "1"])
+    where
+        (newEnv, source, instr) = compileExpressionTemp env a
+
 compileExpressionTemp env@(Environment file global local) (CPostfix PostIncrement a) =
     (Environment file global local, source, instr ++ [Inst OP_ADD source source "1"])
+    where
+        (newEnv, source, instr) = compileExpressionTemp env a
+
+compileExpressionTemp env@(Environment file global local) (CPostfix PostDecrement a) =
+    (Environment file global local, source, instr ++ [Inst OP_SUB source source "1"])
     where
         (newEnv, source, instr) = compileExpressionTemp env a
 

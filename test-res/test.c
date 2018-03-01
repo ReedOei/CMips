@@ -1,6 +1,6 @@
-int f(char *x) {
-    x[5] = 4;
+int f(char *x, int y) {
+    x[y + 4] = 4;
 
-    return 2 * 4;
+    return 0;
 }
 
