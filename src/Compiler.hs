@@ -157,6 +157,7 @@ compileCondition falseLabel env expr@(CBinaryOp op a b)
     where opposite = getBranchOpNeg op
           (aEnv, aReg, aInstr) = compileExpressionTemp env a
           (bEnv, bReg, bInstr) = compileExpressionTemp aEnv b
+compileCondition falseLabel env expr = compileCondition falseLabel env (CBinaryOp CNE expr (LitInt 0))
 
 -- Returns the label to go to in order to skip this block.
 handleIfStatement :: Environment -> CStatement -> (Environment, String, [MIPSInstruction])
@@ -260,7 +261,16 @@ compileExpressionTemp env (CArrayAccess varName expr) =
           reg = getRegister varName local
 
 compileExpressionTemp env (CBinaryOp op a b) =
-    (Environment file global newLocal, reg, aInstr ++ bInstr ++ [Inst (opFind op) reg aReg bReg])
+    case op of
+        -- In the case of CEQ, we compare for equality via:
+        -- li reg, 1
+        -- beq a, b, end
+        -- li reg, 0 # Will be skipped if the two are equal
+        -- end:
+        CEQ -> let (newGlobal, endEqualityTest) = getNextLabel global "end_eq_test" in
+                   (Environment file newGlobal newLocal, reg,
+                    aInstr ++ bInstr ++ [Inst OP_LI reg "1" "", Inst OP_BNE aReg bReg endEqualityTest, Inst OP_LI reg "0" "", Label endEqualityTest])
+        _ -> (Environment file global newLocal, reg, aInstr ++ bInstr ++ [Inst (opFind op) reg aReg bReg])
     where (aEnv, aReg, aInstr) = compileExpressionTemp env a
           (Environment file global local, bReg, bInstr) = compileExpressionTemp aEnv b
           (newLocal, reg) = useNextRegister "t" "temp" local
@@ -286,9 +296,12 @@ compileExpressionTemp env@(Environment file global local) (CPostfix PostDecremen
         (newEnv, source, instr) = compileExpressionTemp env a
 
 compileExpressionTemp env (FuncCall funcName args) =
-    (Environment file global local, "v0",
-     instr ++ argLoading ++ [Inst OP_JAL funcLabel "" ""])
+    (Environment file global newLocal, reg,
+     instr ++ argLoading ++
+        [Inst OP_JAL funcLabel "" "",
+         Inst OP_MOVE reg "v0" ""]) -- Make sure to save func call result.
     where
+        (newLocal, reg) = useNextRegister "t" "func_call_return_val" local
         (funcLabel, _) = getFuncLabel funcName global
         (Environment file global local, regs, instr) = foldl go (env, [], []) args
         argLoading = map (\(i, r) -> Inst OP_MOVE ("a" ++ show i) r "") $ zip [0..] regs

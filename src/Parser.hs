@@ -48,11 +48,11 @@ cIdentifier = do
     pure $ first:rest
 
 commentParser :: CharParser st CStatement
-commentParser = try blockCommentParser <|> do
+commentParser = try blockCommentParser <|> try (do
     wsSkip
     string "//"
     text <- many (noneOf "\n")
-    pure $ CComment text
+    pure $ CComment text)
 
 blockCommentParser :: CharParser st CStatement
 blockCommentParser = do
@@ -135,10 +135,8 @@ statementParser = do
            ExprStatement <$> expressionParser
 
     wsSkip
-
     -- Get semicolon at the end of the line.
     optional (char ';')
-
     optional commentParser
 
     pure val
@@ -294,7 +292,7 @@ operandParser = try (between (char '(') (char ')') (expressionParser <|> prefixP
                 try arrayAccessParser <|>
                 try funcCallParser <|>
                 try (VarRef <$> cIdentifier) <|>
-                LitInt . read <$> many1 digit
+                LitInt <$> readNum
 
 funcCallParser :: CharParser st CExpression
 funcCallParser = do

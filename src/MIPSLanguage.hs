@@ -33,10 +33,12 @@ data MIPSOp = OP_ADD
             | OP_JAL
             | OP_SLL
             | OP_SRL
+            | OP_REM
     deriving (Show, Eq)
 
 mnemonic :: MIPSOp -> String
 mnemonic OP_MOVE = "move"
+mnemonic OP_REM = "rem"
 mnemonic OP_LI = "li"
 mnemonic OP_ADD = "add"
 mnemonic OP_MUL = "mul"
@@ -69,6 +71,10 @@ opFind Minus = OP_SUB
 opFind Div = OP_DIV
 opFind ShiftLeft = OP_SLL
 opFind ShiftRight = OP_SRL
+opFind Mod = OP_REM
+opFind And = OP_AND
+opFind Or = OP_OR
+opFind CNE = OP_SUB -- If they are the same, we will get 0, which is false.
 
 getBranchOpNeg :: BinaryOp -> MIPSOp
 getBranchOpNeg CEQ = OP_BNE
