@@ -14,3 +14,7 @@ int fib(int n) {
     }
 }
 
+int f(int x) {
+    return mySum(0, x) + fib(x);
+}
+

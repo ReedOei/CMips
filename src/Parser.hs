@@ -98,13 +98,13 @@ functionParser = do
 
 typeParser :: CharParser st Type
 typeParser = do
-    -- const <- isConst
-
     wsSkip
     typeName <- do
+        mod <- many (choice [string "long", string "unsigned"] >>= (\str -> char ' ' >> pure str))
         t <- cIdentifier
         notFollowedBy (char '(')
-        return t
+        return $ unwords $ mod ++ [t]
+
     wsSkip
 
     wsSkip

@@ -106,8 +106,8 @@ readable (IfStatement cond _ _) = "if (" ++ readableExpr cond ++ ")"
 readable (ElseBlock _) = "else"
 readable (WhileStatement cond _) = "while (" ++ readableExpr cond ++ ")"
 readable (ForStatement ini cond step _) = "for (" ++ readable ini ++ "; " ++ readableExpr cond ++ "; " ++ readable step ++ ")"
-readable (Assign op (Left varName) expr) = varName ++ maybeOp op ++ " = " ++ readableExpr expr ++ ";"
-readable (Assign op (Right access) expr) = readableExpr access ++ maybeOp op ++ " = " ++ readableExpr expr ++ ";"
+readable (Assign op (Left varName) expr) = varName ++ " " ++ maybeOp op ++ "= " ++ readableExpr expr ++ ";"
+readable (Assign op (Right access) expr) = readableExpr access ++ " " ++ maybeOp op ++ "= " ++ readableExpr expr ++ ";"
 
 readableExpr :: CExpression -> String
 readableExpr (LitInt n) = show n
