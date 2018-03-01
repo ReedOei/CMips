@@ -1,14 +1,6 @@
-int f(int x) {
-    int y = 0;
+int f(char *x) {
+    x[5] = 4;
 
-    if (x == 0) {
-        y = x;
-    } else if (x > 0) {
-        y = x + 1;
-    } else {
-        y = x / 2;
-    }
-
-    return y;
+    return 2 * 4;
 }
 

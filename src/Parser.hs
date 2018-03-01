@@ -288,7 +288,7 @@ prefixParser :: CharParser st CExpression
 prefixParser = do
     op <- choice $ map (try . string . fst) cPrefixOps
     wsSkip
-    var <- cIdentifier
+    var <- operandParser
 
     case lookup op cPrefixOps of
         Nothing -> fail $ "Unknown prefix operation: " ++ op
@@ -296,7 +296,7 @@ prefixParser = do
 
 postfixParser :: CharParser st CExpression
 postfixParser = do
-    var <- cIdentifier
+    var <- operandParser
     wsSkip
     op <- choice $ map (try . string . fst) cPostfixOps
 

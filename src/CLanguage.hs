@@ -53,8 +53,8 @@ data BinaryOp = Add | Minus | CGT | CLT | CGTE | CLTE | CNE | CEQ |
 data CExpression = VarRef String
                  | LitInt Int
                  | FuncCall String [CExpression]
-                 | CPrefix PrefixOp String
-                 | CPostfix PostfixOp String
+                 | CPrefix PrefixOp CExpression
+                 | CPostfix PostfixOp CExpression
                  | CArrayAccess String CExpression
                  | CBinaryOp BinaryOp CExpression CExpression
     deriving (Show, Eq)
@@ -114,7 +114,7 @@ readableExpr (LitInt n) = show n
 readableExpr (VarRef x) = x
 readableExpr (CBinaryOp op a b) = "(" ++ readableExpr a ++ " " ++ readableOp op ++ " " ++ readableExpr b ++ ")"
 readableExpr (FuncCall funcName args) = funcName ++ "(" ++ intercalate ", " (map readableExpr args) ++ ")"
-readableExpr (CPrefix op varName) = readablePrefix op ++ varName
-readableExpr (CPostfix op varName) = varName ++ readablePostfix op
+readableExpr (CPrefix op expr) = readablePrefix op ++ readableExpr expr
+readableExpr (CPostfix op expr) = readableExpr expr ++ readablePostfix op
 readableExpr (CArrayAccess varName expr) = varName ++ "[" ++ readableExpr expr ++ "]"
 

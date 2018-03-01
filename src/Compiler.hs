@@ -20,6 +20,29 @@ data Global = Global [String] (Map String String) -- Map function names to label
 newtype Local = Local (Map String String) -- Map of registers to variable names.
     deriving Show
 
+sizeof :: Type -> Int
+sizeof (Type _ "unsigned int") = 4
+sizeof (Type _ "int") = 4
+sizeof (Type _ "char") = 1
+sizeof (Type _ "unsigned char") = 1
+
+findTypesElement :: CElement -> [Var]
+findTypesElement (FuncDef _ _ vars statements) =
+    vars ++ concatMap findTypesStatement statements
+
+findTypesStatement :: CStatement -> [Var]
+findTypesStatement (VarDef var _) = [var]
+findTypesStatement (ForStatement ini _ _ block) = findTypesStatement ini ++ concatMap findTypesStatement block
+findTypesStatement (IfStatement _ branch statements) = fromMaybe [] (findTypesStatement <$> branch) ++ concatMap findTypesStatement statements
+findTypesStatement (ElseBlock statements) = concatMap findTypesStatement statements
+findTypesStatement (WhileStatement _ statements) = concatMap findTypesStatement statements
+findTypesStatement _ = []
+
+resolve :: String -> CFile -> Var
+resolve refName (CFile _ elements) =
+    fromMaybe (error ("Unknown reference to: " ++ refName)) $
+        find (\(Var _ varName) -> varName == refName) $ concatMap findTypesElement elements
+
 useNextRegister :: String -> String -> Local -> (Local, String)
 useNextRegister rtype str local@(Local registers) =
     case find (`Map.notMember` registers) $ map ((rtype ++) . show) [0..9] of
@@ -113,7 +136,15 @@ compileCondition :: String -> Environment -> CExpression -> (Environment, [MIPSI
 compileCondition falseLabel env st@(CBinaryOp And a b) = (bEnv, aInstr ++ bInstr)
     where (aEnv, aInstr) = compileCondition falseLabel env a
           (bEnv, bInstr) = compileCondition falseLabel aEnv b
-compileCondition falseLabel env (CBinaryOp op a b) = (bEnv, aInstr ++ bInstr ++ [Inst opposite aReg bReg falseLabel])
+compileCondition falseLabel (Environment file global local) st@(CBinaryOp Or a b) =
+    (bEnv, aInstr ++ [Label oneFalseLabel] ++ bInstr)
+    where
+        (newGlobal, oneFalseLabel) = getNextLabel global "one_false"
+        (aEnv, aInstr) = compileCondition oneFalseLabel (Environment file newGlobal local) a
+        (bEnv, bInstr) = compileCondition falseLabel aEnv b
+compileCondition falseLabel env expr@(CBinaryOp op a b)
+    | op `elem` [CEQ, CNE, CLT, CGT, CLTE, CGTE] = (bEnv, aInstr ++ bInstr ++ [Inst opposite aReg bReg falseLabel])
+    | otherwise = compileCondition falseLabel env (CBinaryOp CNE expr (LitInt 0))
     where opposite = getBranchOpNeg op
           (aEnv, aReg, aInstr) = compileExpressionTemp env a
           (bEnv, bReg, bInstr) = compileExpressionTemp aEnv b
@@ -204,11 +235,16 @@ compileExpressionTemp (Environment file global local) (LitInt i) =
 
 compileExpressionTemp env (CArrayAccess varName expr) =
     (Environment file global newLocal, dest,
-     instr ++ [Inst OP_MUL dest source "4", -- Calculate offest TODO: Get sizeof
-               Inst OP_ADD dest dest reg, -- Calculate address to load.
-               Inst OP_LW dest "0" dest]) -- Load memory
+     instr ++ offset ++
+               [Inst OP_ADD dest dest reg, -- Calculate address to load.
+                Inst OP_LW dest "0" dest]) -- Load memory
     where (newEnv@(Environment file global local), source, instr) = compileExpressionTemp env expr
           (newLocal, dest) = useNextRegister "t" (varName ++ "_access") local
+          (Var varType _) = resolve varName file
+          size = sizeof varType
+          offset = case size of
+                    1 -> []
+                    _ -> [Inst OP_MUL dest source $ show size]
           reg = getRegister varName local
 
 compileExpressionTemp env (CBinaryOp op a b) =
@@ -217,11 +253,15 @@ compileExpressionTemp env (CBinaryOp op a b) =
           (Environment file global local, bReg, bInstr) = compileExpressionTemp aEnv b
           (newLocal, reg) = useNextRegister "t" "temp" local
 
-compileExpressionTemp (Environment file global local) (CPrefix PreIncrement a) = (Environment file global local, a, [Inst OP_ADD reg reg "1"])
-    where reg = getRegister a local
+compileExpressionTemp env@(Environment file global local) (CPrefix PreIncrement a) =
+    (Environment file global local, source, instr ++ [Inst OP_ADD source source "1"])
+    where
+        (newEnv, source, instr) = compileExpressionTemp env a
 
-compileExpressionTemp (Environment file global local) (CPostfix PostIncrement a) = (Environment file global local, a, [Inst OP_ADD reg reg "1"])
-    where reg = getRegister a local
+compileExpressionTemp env@(Environment file global local) (CPostfix PostIncrement a) =
+    (Environment file global local, source, instr ++ [Inst OP_ADD source source "1"])
+    where
+        (newEnv, source, instr) = compileExpressionTemp env a
 
 compileExpressionTemp env (FuncCall funcName args) =
     (Environment file global local, "v0",
