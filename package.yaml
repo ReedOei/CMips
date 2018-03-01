@@ -29,7 +29,7 @@ library:
   source-dirs: src
 
 executables:
-  CMips-exe:
+  CMips:
     main:                Main.hs
     source-dirs:         app
     ghc-options:

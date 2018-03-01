@@ -38,7 +38,6 @@ cElementList = filter (/= MiscElement) <$> sepEndBy cElement (many1 (char '\n'))
 cElement :: CharParser st CElement
 cElement = try preprocessorParser <|>
              try functionParser <|>
-             try commentParser <|>
              pure MiscElement
 
 cIdentifier :: CharParser st String
@@ -48,12 +47,20 @@ cIdentifier = do
 
     pure $ first:rest
 
-commentParser :: CharParser st CElement
-commentParser = do
+commentParser :: CharParser st CStatement
+commentParser = try blockCommentParser <|> do
     wsSkip
     string "//"
-    many (noneOf "\n")
-    return MiscElement
+    text <- many (noneOf "\n")
+    pure $ CComment text
+
+blockCommentParser :: CharParser st CStatement
+blockCommentParser = do
+    wsSkip
+    string "/*"
+    text <- manyTill anyChar (string "*/")
+
+    pure $ CComment text
 
 preprocessorParser :: CharParser st CElement
 preprocessorParser = do
@@ -126,6 +133,7 @@ statementParser = do
            try ifStatementParser <|>
            try forStatementParser <|>
            try assignParser <|>
+           try commentParser <|>
            ExprStatement <$> expressionParser
 
     wsSkip
@@ -133,7 +141,7 @@ statementParser = do
     -- Get semicolon at the end of the line.
     optional (char ';')
 
-    wsSkip
+    optional commentParser
 
     pure val
 

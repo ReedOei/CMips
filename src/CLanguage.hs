@@ -33,6 +33,7 @@ data CStatement = Return CExpression
                 | ForStatement CStatement CExpression CStatement [CStatement]
                 | Assign (Maybe BinaryOp) (Either String CExpression) CExpression
                 | ExprStatement CExpression
+                | CComment String
     deriving (Show, Eq)
 
 data PrefixOp = PreIncrement
