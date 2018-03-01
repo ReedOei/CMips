@@ -14,7 +14,7 @@ data Environment = Environment CFile Global Local
     deriving Show
 
 -- List of labels that have been used.
-data Global = Global [String] (Map String String) -- Map function names to labels.
+data Global = Global [String] (Map String (String, String)) String -- Map function names to labels.
     deriving Show
 
 newtype Local = Local (Map String String) -- Map of registers to variable names.
@@ -64,19 +64,20 @@ getRegister varName (Local registers) =
               lookup varName $ map (\(a, b) -> (b, a)) $ Map.assocs registers
 
 getNextLabel :: Global -> String -> (Global, String)
-getNextLabel (Global labels funcs) labelType = (Global (newLabel:labels) funcs, newLabel)
+getNextLabel (Global labels funcs curFunc) labelType = (Global (newLabel:labels) funcs curFunc, newLabel)
     where n = length $ filter (labelType `isPrefixOf`) labels
           newLabel = if n > 0 then
                         labelType ++ "_" ++ show n
                      else
                         labelType
 
-funcLabel :: Global -> String -> (Global, String)
-funcLabel global funcName = (Global labels (Map.insert funcName funcLabel funcs), funcLabel)
-    where (Global labels funcs, funcLabel) = getNextLabel global funcName
+funcLabel :: Global -> String -> (Global, (String, String))
+funcLabel global funcName = (Global labels (Map.insert funcName (funcLabel, funcEnd) funcs) curFunc, (funcLabel, funcEnd))
+    where (newGlobal, funcLabel) = getNextLabel global funcName
+          (Global labels funcs curFunc, funcEnd) = getNextLabel global $ funcName ++ "_end"
 
-getFuncLabel :: String -> Global -> String
-getFuncLabel funcName (Global _ funcs) =
+getFuncLabel :: String -> Global -> (String, String)
+getFuncLabel funcName (Global _ funcs _) =
     fromMaybe (error ("Undefined reference to: " ++ funcName)) $ Map.lookup funcName funcs
 
 purgeRegType :: String -> Local -> Local
@@ -89,17 +90,23 @@ purgeRegTypesEnv :: [String] -> Environment -> Environment
 purgeRegTypesEnv rTypes env = foldr purgeRegTypeEnv env rTypes
 
 emptyEnvironment :: Environment
-emptyEnvironment = Environment (CFile "" []) (Global [] Map.empty) (Local Map.empty)
+emptyEnvironment = Environment (CFile "" []) (Global [] Map.empty "") (Local Map.empty)
 
 newEnvironment :: CFile -> Environment
-newEnvironment file = Environment file (Global [] Map.empty) (Local Map.empty)
+newEnvironment file = Environment file (Global [] Map.empty "") (Local Map.empty)
+
+setCurFunc :: String -> Global -> Global
+setCurFunc curFunc (Global labels funcs _) = Global labels funcs curFunc
+
+getCurFunc :: Global -> String
+getCurFunc (Global _ _ curFunc) = curFunc
 
 compile :: CFile -> MIPSFile
 compile file@(CFile fname elements) = MIPSFile fname instructions
     where
         (finalEnv, instructions) = foldl go (newEnvironment file, []) elements
         go (env, prev) element = let (newEnv, newInstructions) = compileElement env element in
-                                     (newEnv, prev ++ newInstructions)
+                                     (newEnv, prev ++ [newInstructions])
 
 saveStack :: [String] -> [MIPSInstruction]
 saveStack registers = Inst OP_SUB "sp" "sp" (show (4 * length registers)) : saveInstr
@@ -112,10 +119,11 @@ restoreStack registers = restoreInstr ++ [Inst OP_ADD "sp" "sp" (show (4 * lengt
 compileElement :: Environment -> CElement -> (Environment, [MIPSInstruction])
 compileElement (Environment file global local) (FuncDef t funcName args statements) =
     (Environment finalFile finalGlobal local,
-     Label label : saveStack saveRegs ++ body ++ restoreStack saveRegs ++ [Inst OP_JR "ra" "" ""])
+     Label label : saveStack saveRegs ++ [Empty] ++ body ++ [Empty, Label funcEnd] ++ restoreStack saveRegs ++ [Inst OP_JR "ra" "" ""])
     where
-        (newGlobal, label) = funcLabel global funcName
+        (tempGlobal, (label, funcEnd)) = funcLabel global funcName
         (newLocal, argInstr) = generateArgs args local
+        newGlobal = setCurFunc funcName tempGlobal
         (Environment finalFile finalGlobal finalLocal, instr) = compileStatements (Environment file newGlobal newLocal) statements
         body = argInstr ++ instr
         saveRegs =
@@ -204,8 +212,9 @@ compileStatement env st@(ForStatement ini cond step body) =
 
 compileStatement env st@(Return expr) =
     (purgeRegTypeEnv "t" newEnv,
-     Comment (readable st) : instr ++ [Inst OP_MOVE "v0" source ""])
-     where (newEnv, source, instr) = compileExpressionTemp env expr
+     Comment (readable st) : instr ++ [Inst OP_MOVE "v0" source "", Inst OP_J funcEnd "" ""])
+     where (newEnv@(Environment _ global _), source, instr) = compileExpressionTemp env expr
+           (_, funcEnd) = getFuncLabel (getCurFunc global) global
 
 compileStatement env@(Environment file global local) st@(Assign assignKind lhs rhs) =
     (purgeRegTypeEnv "t" newEnv,
@@ -280,7 +289,7 @@ compileExpressionTemp env (FuncCall funcName args) =
     (Environment file global local, "v0",
      instr ++ argLoading ++ [Inst OP_JAL funcLabel "" ""])
     where
-        funcLabel = getFuncLabel funcName global
+        (funcLabel, _) = getFuncLabel funcName global
         (Environment file global local, regs, instr) = foldl go (env, [], []) args
         argLoading = map (\(i, r) -> Inst OP_MOVE ("a" ++ show i) r "") $ zip [0..] regs
         go (curEnv, curRegs, curInstr) expr =

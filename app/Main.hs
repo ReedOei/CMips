@@ -22,6 +22,8 @@ main = do
         (o, [filename], []) -> do
             text <- generateFile . compile <$> loadFile filename
 
+            putStrLn text
+
             case o of
                 [] -> writeFile "a.s" text
                 [outfile] -> writeFile outfile text

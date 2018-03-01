@@ -2,12 +2,13 @@ module MIPSLanguage where
 
 import CLanguage
 
-data MIPSFile = MIPSFile String [MIPSInstruction]
+data MIPSFile = MIPSFile String [[MIPSInstruction]] -- Each list contains one function def.
     deriving Show
 
 data MIPSInstruction = Inst MIPSOp String String String
                      | Label String
                      | Comment String
+                     | Empty
     deriving Show
 
 data MIPSOp = OP_ADD

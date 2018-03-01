@@ -113,8 +113,6 @@ typeParser = do
         return $ unwords $ mod ++ [t]
 
     wsSkip
-
-    wsSkip
     varKindStr <- optionMaybe $ char '*'
     wsSkip
 
