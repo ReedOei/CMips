@@ -1,3 +1,5 @@
+{-# LANGUAGE TupleSections #-}
+
 module Compiler where
 
 import Control.Monad
@@ -47,41 +49,60 @@ resolve refName (CFile _ elements) =
     fromMaybe (error ("Unknown reference to: " ++ refName)) $
         find (\(Var _ varName) -> varName == refName) $ concatMap findTypesElement elements
 
-useNextRegister :: String -> String -> Local -> (Local, String)
-useNextRegister rtype str local@(Local registers) =
-    case find (`Map.notMember` registers) $ map ((rtype ++) . show) [0..9] of
-        Just register -> (Local (Map.insert register str registers), register)
+useNextRegister :: String -> String -> State Environment String
+useNextRegister rtype str = do
+    Environment file global local@(Local registers) <- get
 
-generateArgs :: [Var] -> Local -> (Local, [MIPSInstruction])
-generateArgs [] local = (local, [])
-generateArgs (Var _ varName:args) local = (finalLocal, Inst OP_MOVE reg ("a" ++ tail reg) "" : instr)
-    where (newLocal, reg) = useNextRegister "s" varName local -- Use the s registers to store in case of function calls that would override.
-          (finalLocal, instr) = generateArgs args newLocal
+    -- Note: This is guaranteed to succeed because we're searching through an infinite list.
+    -- That being said, the register might not always be valid, but that's another problem.
+    case find (`Map.notMember` registers) $ map ((rtype ++) . show) [0..] of
+        Just register -> do
+            put $ Environment file global $ Local $ Map.insert register str registers
+            pure register
 
-getRegsOfType :: String -> Local -> [String]
-getRegsOfType rType (Local registers) = filter (rType `isPrefixOf`) $ Map.keys registers
+generateArgs :: [Var] -> State Environment [MIPSInstruction]
+generateArgs [] = pure []
+generateArgs (Var _ varName:args) = do
+    reg <- useNextRegister "s" varName -- Use the s registers to store in case of function calls that would override.
+    instr <- generateArgs args
+    pure $ Inst OP_MOVE reg ("a" ++ tail reg) "" : instr
 
-getRegister :: String -> Local -> String
-getRegister varName (Local registers) =
-    fromMaybe (error ("Undefined reference to: " ++ varName)) $
+getRegsOfType :: String -> State Environment [String]
+getRegsOfType rType = do
+    Environment _ _ (Local registers) <- get
+    pure $ filter (rType `isPrefixOf`) $ Map.keys registers
+
+getRegister :: String -> State Environment String
+getRegister varName = do
+    Environment _ _ (Local registers) <- get
+    pure $ fromMaybe (error ("Undefined reference to: " ++ varName)) $
               lookup varName $ map (\(a, b) -> (b, a)) $ Map.assocs registers
 
-getNextLabel :: Global -> String -> (Global, String)
-getNextLabel (Global labels funcs curFunc) labelType = (Global (newLabel:labels) funcs curFunc, newLabel)
-    where n = length $ filter (labelType `isPrefixOf`) labels
-          newLabel = if n > 0 then
+getNextLabel :: String -> State Environment String
+getNextLabel labelType = do
+    Environment file (Global labels funcs curFunc) local <- get
+
+    let n = length $ filter (labelType `isPrefixOf`) labels
+        newLabel = if n > 0 then
                         labelType ++ "_" ++ show n
-                     else
+                   else
                         labelType
 
-funcLabel :: Global -> String -> (Global, (String, String))
-funcLabel global funcName = (Global labels (Map.insert funcName (funcLabel, funcEnd) funcs) curFunc, (funcLabel, funcEnd))
-    where (newGlobal, funcLabel) = getNextLabel global funcName
-          (Global labels funcs curFunc, funcEnd) = getNextLabel global $ funcName ++ "_end"
+    put $ Environment file (Global (newLabel:labels) funcs curFunc) local
+    pure newLabel
 
-getFuncLabel :: String -> Global -> (String, String)
-getFuncLabel funcName (Global _ funcs _) =
-    fromMaybe (error ("Undefined reference to: " ++ funcName)) $ Map.lookup funcName funcs
+funcLabel :: String -> State Environment (String, String)
+funcLabel funcName = do
+    funcLabel <- getNextLabel funcName
+    funcEnd <- getNextLabel $ funcName ++ "_end"
+    Environment file (Global labels funcs curFunc) local <- get
+    put $ Environment file (Global labels (Map.insert funcName (funcLabel, funcEnd) funcs) curFunc) local
+    pure (funcLabel, funcEnd)
+
+getFuncLabel :: String -> State Environment (String, String)
+getFuncLabel funcName = do
+    Environment _ (Global _ funcs _) _ <- get
+    pure $ fromMaybe (error ("Undefined reference to: " ++ funcName)) $ Map.lookup funcName funcs
 
 purgeRegType :: String -> Local -> Local
 purgeRegType rType (Local registers) = Local $ Map.filterWithKey (\k _ -> not (rType `isPrefixOf` k)) registers
@@ -98,11 +119,13 @@ emptyEnvironment = Environment (CFile "" []) (Global [] Map.empty "") (Local Map
 newEnvironment :: CFile -> Environment
 newEnvironment file = Environment file (Global [] Map.empty "") (Local Map.empty)
 
-setCurFunc :: String -> Global -> Global
-setCurFunc curFunc (Global labels funcs _) = Global labels funcs curFunc
+setCurFunc :: String -> State Environment ()
+setCurFunc curFunc = modify (\(Environment file (Global labels funcs _) local) -> Environment file (Global labels funcs curFunc) local)
 
-getCurFunc :: Global -> String
-getCurFunc (Global _ _ curFunc) = curFunc
+getCurFunc :: State Environment String
+getCurFunc = do
+    Environment _ (Global _ _ curFunc) _ <- get
+    pure curFunc
 
 compile :: CFile -> MIPSFile
 compile file@(CFile fname elements) = MIPSFile fname instructions
@@ -110,8 +133,9 @@ compile file@(CFile fname elements) = MIPSFile fname instructions
         (instructions, finalEnv) = runState state $ newEnvironment file
         state = foldM go [] elements
         go prev element = do
-            env <- get
             newInstructions <- compileElement element
+
+            modify $ purgeRegTypesEnv ["s", "t"]
 
             return $ prev ++ [newInstructions]
 
@@ -125,26 +149,22 @@ restoreStack registers = restoreInstr ++ [Inst OP_ADD "sp" "sp" (show (4 * lengt
 
 compileElement :: CElement -> State Environment [MIPSInstruction]
 compileElement (FuncDef t funcName args statements) = do
-    Environment file global local <- get
-    let (tempGlobal, (label, funcEnd)) = funcLabel global funcName
-        (newLocal, argInstr) = generateArgs args local
-        newGlobal = setCurFunc funcName tempGlobal in do
+    (label, funcEnd) <- funcLabel funcName
 
-        put $ Environment file newGlobal newLocal
-        instr <- compileStatements statements
+    setCurFunc funcName
 
-        Environment finalFile finalGlobal finalLocal <- get
+    argInstr <- generateArgs args
 
-        let body = argInstr ++ instr
-            saveRegs =
-                case find isJAL body of
-                    -- We only need to save the return address if there's a jal in the body.
-                    Nothing -> getRegsOfType "s" finalLocal
-                    Just _ -> "ra" : getRegsOfType "s" finalLocal in do
+    instr <- compileStatements statements
 
-        put $ Environment finalFile finalGlobal local
+    let body = argInstr ++ instr
+    saveRegs <-
+        case find isJAL body of
+            -- We only need to save the return address if there's a jal in the body.
+            Nothing -> getRegsOfType "s"
+            Just _ -> ("ra" :) <$> getRegsOfType "s"
 
-        pure $ Label label : saveStack saveRegs ++ [Empty] ++ body ++ [Empty, Label funcEnd] ++ restoreStack saveRegs ++ [Inst OP_JR "ra" "" ""]
+    pure $ Label label : saveStack saveRegs ++ [Empty] ++ body ++ [Empty, Label funcEnd] ++ restoreStack saveRegs ++ [Inst OP_JR "ra" "" ""]
 
 compileElement _ = pure []
 
@@ -168,13 +188,11 @@ compileCondition falseLabel st@(CBinaryOp And a b) =  do
     pure $ aInstr ++ bInstr
 
 compileCondition falseLabel st@(CBinaryOp Or a b) = do
-    Environment file global local <- get
-    let (newGlobal, oneFalseLabel) = getNextLabel global "one_false" in do
-        put $ Environment file newGlobal local
+    oneFalseLabel <- getNextLabel "one_false"
 
-        aInstr <- compileCondition oneFalseLabel a
-        bInstr <- compileCondition falseLabel b
-        pure $ aInstr ++ [Label oneFalseLabel] ++ bInstr
+    aInstr <- compileCondition oneFalseLabel a
+    bInstr <- compileCondition falseLabel b
+    pure $ aInstr ++ [Label oneFalseLabel] ++ bInstr
 
 compileCondition falseLabel expr@(CBinaryOp op a b) = do
     env <- get
@@ -191,50 +209,43 @@ compileCondition falseLabel expr = compileCondition falseLabel (CBinaryOp CNE ex
 -- Returns the label to go to in order to skip this block.
 handleIfStatement :: CStatement -> State Environment (String, [MIPSInstruction])
 handleIfStatement st@(ElseBlock statements) = do
-    Environment file global local <- get
-    let (newGlobal, labelEnd) = getNextLabel global "else_end" in do
-        put $ Environment file newGlobal local
+    labelEnd <- getNextLabel "else_end"
+    instr <- compileStatements statements
 
-        instr <- compileStatements statements
-
-        pure (labelEnd, Empty : Comment (readable st) : instr ++ [Label labelEnd])
+    pure (labelEnd, Empty : Comment (readable st) : instr ++ [Label labelEnd])
 
 handleIfStatement st@(IfStatement cond branches body) = do
-    Environment file global local <- get
-    let (globalLabelStart, labelStart) = getNextLabel global "if"
-        (newGlobal, labelEnd) = getNextLabel globalLabelStart "if_end" in do
+    labelStart <- getNextLabel "if"
+    labelEnd <- getNextLabel "if_end"
 
-        put $ Environment file newGlobal local
-        instr <- compileCondition labelEnd cond
-        finalEnv <- get
+    instr <- compileCondition labelEnd cond
+    finalEnv <- get
 
-        bodyInstr <- compileStatements body
-        case branches of
-            Nothing -> pure (labelEnd, [Label labelEnd])
-            Just branch -> do
-                (branchEnd, instrs) <- handleIfStatement branch
+    bodyInstr <- compileStatements body
+    case branches of
+        Nothing -> pure (labelEnd, [Label labelEnd])
+        Just branch -> do
+            (branchEnd, instrs) <- handleIfStatement branch
 
-                modify $ purgeRegTypeEnv "t"
+            modify $ purgeRegTypeEnv "t"
 
-                pure (labelEnd, [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ [Inst OP_J branchEnd "" "", Label labelEnd] ++ instrs)
+            pure (labelEnd, [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ [Inst OP_J branchEnd "" "", Label labelEnd] ++ instrs)
 
 ----------------------------------
 -- Compile statements
 ----------------------------------
 compileStatement :: CStatement -> State Environment [MIPSInstruction]
 compileStatement st@(VarDef (Var (Type varKind typeName) varName) ini) = do
-    Environment file global local <- get
+    reg <- useNextRegister "s" varName
 
-    let (newLocal, reg) = useNextRegister "s" varName local in do
-        put $ Environment file global newLocal
-        case ini of
-            -- If there's no initializer, all we need to do is take note of the fact that this variable exists
-            Nothing -> pure [Empty, Comment (readable st)]
-            Just (LitInt n) -> pure [Empty, Comment (readable st), Inst OP_LI reg (show n) ""]
-            Just initializer -> do
-                (source, instructions) <- compileExpressionTemp initializer
-                modify $ purgeRegTypeEnv "t"
-                pure $ Empty : Comment (readable st) : instructions ++ [Inst OP_MOVE reg source ""]
+    case ini of
+        -- If there's no initializer, all we need to do is take note of the fact that this variable exists
+        Nothing -> pure [Empty, Comment (readable st)]
+        Just (LitInt n) -> pure [Empty, Comment (readable st), Inst OP_LI reg (show n) ""]
+        Just initializer -> do
+            (source, instructions) <- compileExpressionTemp initializer
+            modify $ purgeRegTypeEnv "t"
+            pure $ Empty : Comment (readable st) : instructions ++ [Inst OP_MOVE reg source ""]
 
 
 compileStatement ifStatement@IfStatement{} = do
@@ -242,16 +253,14 @@ compileStatement ifStatement@IfStatement{} = do
     pure instr
 
 compileStatement st@(WhileStatement cond body) = do
-    Environment file global local <- get
-    let (globalLabelStart, labelStart) = getNextLabel global "while"
-        (newGlobal, labelEnd) = getNextLabel globalLabelStart "while_end" in do
+    labelStart <- getNextLabel "while"
+    labelEnd <- getNextLabel "while_end"
 
-        put $ Environment file newGlobal local
-        instr <- compileCondition labelEnd cond
-        bodyInstr <- compileStatements body
+    instr <- compileCondition labelEnd cond
+    bodyInstr <- compileStatements body
 
-        modify $ purgeRegTypeEnv "t"
-        pure $ [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ [Inst OP_J labelStart "" "", Label labelEnd]
+    modify $ purgeRegTypeEnv "t"
+    pure $ [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ [Inst OP_J labelStart "" "", Label labelEnd]
 
 compileStatement st@(ForStatement ini cond step body) = do
     env <- get
@@ -268,14 +277,15 @@ compileStatement st@(Return expr) = do
 
     Environment _ global _ <- get
 
-    let (_, funcEnd) = getFuncLabel (getCurFunc global) global in do
-        modify $ purgeRegTypeEnv "t"
-        pure $ Empty : Comment (readable st) : instr ++ [Inst OP_MOVE "v0" source "", Inst OP_J funcEnd "" ""]
+    (_, funcEnd) <- getFuncLabel =<< getCurFunc
+
+    modify $ purgeRegTypeEnv "t"
+    pure $ Empty : Comment (readable st) : instr ++ [Inst OP_MOVE "v0" source "", Inst OP_J funcEnd "" ""]
 
 compileStatement st@(Assign assignKind lhs rhs) = do
     (source, instr) <- compileExpressionTemp rhs
 
-    env@(Environment file global local) <- get
+    Environment file global local <- get
 
     (reg, accessInstr, postAccessInstr) <- do
             let assignOp x r = case assignKind of
@@ -283,18 +293,19 @@ compileStatement st@(Assign assignKind lhs rhs) = do
                                 Just op -> [Inst (opFind op) r r source]
 
             case lhs of
-                Left varName -> pure (getRegister varName local, [], assignOp (getRegister varName local) (getRegister varName local))
+                Left varName -> do
+                    tempReg <- getRegister varName
+                    pure (tempReg, [], assignOp tempReg tempReg)
                 Right expr@(CArrayAccess _ _) -> do
                     (dest, accessInstr) <- compileExpressionTemp expr
-                    Environment _ _ newLocal <- get
 
-                    let (finalLocal, tempReg) = useNextRegister "t" "temp_array_load" newLocal
+                    tempReg <- useNextRegister "t" "temp_array_load"
 
-                    put $ Environment file global finalLocal
                     pure (dest, init accessInstr, [Inst OP_LW tempReg "0" dest] ++ assignOp dest tempReg ++ [Inst OP_SW tempReg "0" dest])
-                Right expr@(CPrefix Dereference (VarRef varName)) ->
-                    let tempReg = getRegister varName local in
-                        pure (tempReg, [], assignOp tempReg source ++ [Inst OP_SW source "0" tempReg])
+                Right expr@(CPrefix Dereference (VarRef varName)) -> do
+                    tempReg <- getRegister varName
+
+                    pure (tempReg, [], assignOp tempReg source ++ [Inst OP_SW source "0" tempReg])
 
     modify $ purgeRegTypeEnv "t"
     pure $ Empty : Comment (readable st) : accessInstr ++ instr ++ postAccessInstr
@@ -309,50 +320,42 @@ compileStatement st@(ExprStatement expr) = do
 -- Compile Expression (using temp registers)
 ---------------------------------------------
 compileExpressionTemp :: CExpression -> State Environment (String, [MIPSInstruction])
-compileExpressionTemp (VarRef varName) = do
-    Environment _ _ local <- get
-    pure (getRegister varName local, [])
+compileExpressionTemp (VarRef varName) = (,[]) <$> getRegister varName
 
 compileExpressionTemp (LitInt i) = do
-    Environment file global local <- get
-    let (newLocal, reg) = useNextRegister "t" (show i) local
-    put $ Environment file global newLocal
-
+    reg <- useNextRegister "t" $ show i
     pure (reg, [Inst OP_LI reg (show i) ""])
 
 compileExpressionTemp (CArrayAccess varName expr) = do
-    env <- get
     (source, instr) <- compileExpressionTemp expr
-    newEnv@(Environment file global local) <- get
 
-    let (newLocal, dest) = useNextRegister "t" (varName ++ "_access") local
-        (Var varType _) = resolve varName file
+    dest <- useNextRegister "t" $ varName ++ "_access"
+    Environment file _ _ <- get
+    let (Var varType _) = resolve varName file
         size = sizeof varType
-        reg = getRegister varName local in do
 
-        put $ Environment file global newLocal
-        pure (dest,
-                 instr ++ [Inst OP_MUL dest source $ show size,
-                           Inst OP_ADD dest dest reg, -- Calculate address to load.
-                           Inst OP_LW dest "0" dest]) -- Load memory
+    reg <- getRegister varName
+    pure (dest,
+             instr ++ [Inst OP_MUL dest source $ show size,
+                       Inst OP_ADD dest dest reg, -- Calculate address to load.
+                       Inst OP_LW dest "0" dest]) -- Load memory
 
 compileExpressionTemp (CBinaryOp op a b) = do
     (aReg, aInstr) <- compileExpressionTemp a
     (bReg, bInstr) <- compileExpressionTemp b
-    Environment file global local <- get
-    let (newLocal, reg) = useNextRegister "t" "temp" local in
-        case op of
-            -- In the case of CEQ, we compare for equality via:
-            -- li reg, 1
-            -- beq a, b, end
-            -- li reg, 0 # Will be skipped if the two are equal
-            -- end:
-            CEQ -> let (newGlobal, endEqualityTest) = getNextLabel global "end_eq_test" in do
-                put $ Environment file newGlobal newLocal
-                pure (reg, aInstr ++ bInstr ++ [Inst OP_LI reg "1" "", Inst OP_BNE aReg bReg endEqualityTest, Inst OP_LI reg "0" "", Label endEqualityTest])
-            _ -> do
-                put $ Environment file global newLocal
-                pure (reg, aInstr ++ bInstr ++ [Inst (opFind op) reg aReg bReg])
+
+    reg <- useNextRegister "t" "temp"
+
+    case op of
+        -- In the case of CEQ, we compare for equality via:
+        -- li reg, 1
+        -- beq a, b, end
+        -- li reg, 0 # Will be skipped if the two are equal
+        -- end:
+        CEQ -> do
+            endEqualityTest <- getNextLabel "end_eq_test"
+            pure (reg, aInstr ++ bInstr ++ [Inst OP_LI reg "1" "", Inst OP_BNE aReg bReg endEqualityTest, Inst OP_LI reg "0" "", Label endEqualityTest])
+        _ -> pure (reg, aInstr ++ bInstr ++ [Inst (opFind op) reg aReg bReg])
 
 compileExpressionTemp (CPrefix PreIncrement a) = do
     (source, instr) <- compileExpressionTemp a
@@ -363,22 +366,16 @@ compileExpressionTemp (CPrefix PreDecrement a) = do
     pure (source, instr ++ [Inst OP_SUB source source "1"])
 
 compileExpressionTemp (CPrefix Dereference a) = do
-    Environment file global local <- get
-    let (newLocal, reg) = useNextRegister "t" "temp" local in do
-        put $ Environment file global newLocal
-
-        (source, instr) <- compileExpressionTemp a
-        pure (source, instr ++ [Inst OP_LW reg source ""])
+    reg <- useNextRegister "t" "temp"
+    (source, instr) <- compileExpressionTemp a
+    pure (source, instr ++ [Inst OP_LW reg source ""])
 
 compileExpressionTemp (CPrefix PreNot a) = do
     (source, instr) <- compileExpressionTemp a
-    Environment file global local <- get
+    endNot <- getNextLabel "end_not"
+    reg <- useNextRegister "t" "temp"
 
-    let (newGlobal, endNot) = getNextLabel global "end_not"
-        (newLocal, reg) = useNextRegister "t" "temp" local in do
-
-        put $ Environment file newGlobal newLocal
-        pure (reg, instr ++ [Inst OP_LI reg "1" "", Inst OP_BEQ source "0" endNot, Inst OP_LI reg "0" "", Label endNot])
+    pure (reg, instr ++ [Inst OP_LI reg "1" "", Inst OP_BEQ source "0" endNot, Inst OP_LI reg "0" "", Label endNot])
 
 compileExpressionTemp (CPostfix PostIncrement a) = do
     (source, instr) <- compileExpressionTemp a
@@ -392,19 +389,17 @@ compileExpressionTemp (FuncCall funcName args) = do
     env <- get
     let go (curRegs, curInstr) expr = do
             (reg, newInstr) <- compileExpressionTemp expr
-            pure (curRegs ++ [reg], curInstr ++ newInstr) in do
+            pure (curRegs ++ [reg], curInstr ++ newInstr)
 
-        (regs, instr) <- foldM go ([], []) args
+    (regs, instr) <- foldM go ([], []) args
 
-        Environment file global local <- get
+    let argLoading = map (\(i, r) -> Inst OP_MOVE ("a" ++ show i) r "") $ zip [0..] regs
 
-        let (newLocal, reg) = useNextRegister "t" "func_call_return_val" local
-            (funcLabel, _) = getFuncLabel funcName global
-            argLoading = map (\(i, r) -> Inst OP_MOVE ("a" ++ show i) r "") $ zip [0..] regs
+    (funcLabel, _) <- getFuncLabel funcName
+    reg <- useNextRegister "t" "func_call_return_val"
 
-        put $ Environment file global newLocal
-        pure (reg,
-                 instr ++ argLoading ++
-                    [Inst OP_JAL funcLabel "" "",
-                     Inst OP_MOVE reg "v0" ""]) -- Make sure to save func call result.
+    pure (reg,
+             instr ++ argLoading ++
+                [Inst OP_JAL funcLabel "" "",
+                 Inst OP_MOVE reg "v0" ""]) -- Make sure to save func call result.
 
