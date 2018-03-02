@@ -42,5 +42,6 @@ generateInstruction (Inst funct rd rs rt) =
         OP_BGE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
         OP_BLT -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
         OP_BLE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
+        OP_NOT -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs
         _ -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ regName rt
 

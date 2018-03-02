@@ -152,7 +152,8 @@ compileCondition falseLabel (Environment file global local) st@(CBinaryOp Or a b
         (aEnv, aInstr) = compileCondition oneFalseLabel (Environment file newGlobal local) a
         (bEnv, bInstr) = compileCondition falseLabel aEnv b
 compileCondition falseLabel env expr@(CBinaryOp op a b)
-    | op `elem` [CEQ, CNE, CLT, CGT, CLTE, CGTE] = (bEnv, aInstr ++ bInstr ++ [Inst opposite aReg bReg falseLabel])
+    | op `elem` [CEQ, CNE, CLT, CGT, CLTE, CGTE] =
+        (bEnv, aInstr ++ bInstr ++ [Inst opposite aReg bReg falseLabel])
     | otherwise = compileCondition falseLabel env (CBinaryOp CNE expr (LitInt 0))
     where opposite = getBranchOpNeg op
           (aEnv, aReg, aInstr) = compileExpressionTemp env a
@@ -221,19 +222,20 @@ compileStatement env@(Environment file global local) st@(Assign assignKind lhs r
     (purgeRegTypeEnv "t" newEnv,
      Empty : Comment (readable st) : accessInstr ++ instr ++ postAccessInstr)
     where
-        assignOp = case assignKind of
-                Nothing -> Inst OP_MOVE reg source ""
-                Just op -> Inst (opFind op) reg reg source
-        (newEnv, source, instr) = compileExpressionTemp env rhs
-        (reg, accessInstr, postAccessInstr) =
+        assignOp r = case assignKind of
+                Nothing -> [Inst OP_MOVE reg source ""]
+                Just op -> [Inst (opFind op) r r source]
+        (newEnv, source, instr) = compileExpressionTemp (Environment file global newLocal) rhs
+        (newLocal, reg, accessInstr, postAccessInstr) =
                 case lhs of
-                    Left varName -> (getRegister varName local, [], [assignOp])
+                    Left varName -> (local, getRegister varName local, [], assignOp reg)
                     Right expr@(CArrayAccess _ _) ->
-                        let (_, dest, accessInstr) = compileExpressionTemp env expr in
-                            (dest, init accessInstr, [Inst OP_SW source "0" dest])
+                        let (Environment _ _ newLocal, dest, accessInstr) = compileExpressionTemp env expr
+                            (finalLocal, tempReg) = useNextRegister "t" "temp_array_load" newLocal in
+                            (finalLocal, dest, init accessInstr, [Inst OP_LW tempReg "0" dest] ++ assignOp tempReg ++ [Inst OP_SW tempReg "0" dest])
                     Right expr@(CPrefix Dereference (VarRef varName)) ->
                         let tempReg = getRegister varName local in
-                            (tempReg, [], [Inst OP_SW source "0" tempReg])
+                            (local, tempReg, [], assignOp source ++ [Inst OP_SW source "0" tempReg])
 
 compileStatement env st@(ExprStatement expr) =
     let (newEnv, _, instr) = compileExpressionTemp env expr in
@@ -285,13 +287,26 @@ compileExpressionTemp env@(Environment file global local) (CPrefix PreDecrement 
     where
         (newEnv, source, instr) = compileExpressionTemp env a
 
-compileExpressionTemp env@(Environment file global local) (CPostfix PostIncrement a) =
-    (Environment file global local, source, instr ++ [Inst OP_ADD source source "1"])
+compileExpressionTemp env (CPrefix Dereference a) =
+    (Environment file global newLocal, source, instr ++ [Inst OP_LW reg source ""])
+    where
+        (Environment file global local, source, instr) = compileExpressionTemp env a
+        (newLocal, reg) = useNextRegister "t" "temp" local
+
+compileExpressionTemp env (CPrefix PreNot a) =
+    (Environment file newGlobal newLocal, reg, instr ++ [Inst OP_LI reg "1" "", Inst OP_BEQ source "0" endNot, Inst OP_LI reg "0" "", Label endNot])
+    where
+        (Environment file global local, source, instr) = compileExpressionTemp env a
+        (newGlobal, endNot) = getNextLabel global "end_not"
+        (newLocal, reg) = useNextRegister "t" "temp" local
+
+compileExpressionTemp env (CPostfix PostIncrement a) =
+    (env, source, instr ++ [Inst OP_ADD source source "1"])
     where
         (newEnv, source, instr) = compileExpressionTemp env a
 
-compileExpressionTemp env@(Environment file global local) (CPostfix PostDecrement a) =
-    (Environment file global local, source, instr ++ [Inst OP_SUB source source "1"])
+compileExpressionTemp env (CPostfix PostDecrement a) =
+    (newEnv, source, instr ++ [Inst OP_SUB source source "1"])
     where
         (newEnv, source, instr) = compileExpressionTemp env a
 
@@ -307,7 +322,5 @@ compileExpressionTemp env (FuncCall funcName args) =
         argLoading = map (\(i, r) -> Inst OP_MOVE ("a" ++ show i) r "") $ zip [0..] regs
         go (curEnv, curRegs, curInstr) expr =
             let (newEnv, reg, newInstr) = compileExpressionTemp curEnv expr in
-                (newEnv, reg:curRegs, curInstr ++ newInstr)
-
-compileExpressionTemp (Environment file global local) _ = (Environment file global local, "", [])
+                (newEnv, curRegs ++ [reg], curInstr ++ newInstr)
 

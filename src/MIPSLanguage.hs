@@ -34,6 +34,7 @@ data MIPSOp = OP_ADD
             | OP_SLL
             | OP_SRL
             | OP_REM
+            | OP_NOT
     deriving (Show, Eq)
 
 mnemonic :: MIPSOp -> String
@@ -60,6 +61,7 @@ mnemonic OP_JR = "jr"
 mnemonic OP_JAL = "jal"
 mnemonic OP_SLL = "sll"
 mnemonic OP_SRL = "srl"
+mnemonic OP_NOT = "not"
 
 opFind :: BinaryOp -> MIPSOp
 opFind Add = OP_ADD
