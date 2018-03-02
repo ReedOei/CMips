@@ -1,5 +1,8 @@
 module Compiler where
 
+import Control.Monad
+import Control.Monad.State
+
 import Data.List (isPrefixOf, find)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -104,9 +107,13 @@ getCurFunc (Global _ _ curFunc) = curFunc
 compile :: CFile -> MIPSFile
 compile file@(CFile fname elements) = MIPSFile fname instructions
     where
-        (finalEnv, instructions) = foldl go (newEnvironment file, []) elements
-        go (env, prev) element = let (newEnv, newInstructions) = compileElement env element in
-                                     (newEnv, prev ++ [newInstructions])
+        (instructions, finalEnv) = runState state $ newEnvironment file
+        state = foldM go [] elements
+        go prev element = do
+            env <- get
+            newInstructions <- compileElement element
+
+            return $ prev ++ [newInstructions]
 
 saveStack :: [String] -> [MIPSInstruction]
 saveStack registers = Inst OP_SUB "sp" "sp" (show (4 * length registers)) : saveInstr
@@ -116,211 +123,288 @@ restoreStack :: [String] -> [MIPSInstruction]
 restoreStack registers = restoreInstr ++ [Inst OP_ADD "sp" "sp" (show (4 * length registers))]
     where restoreInstr = map (\(i, r) -> Inst OP_LW r (show (i * 4)) "sp") $ zip [0..] registers
 
-compileElement :: Environment -> CElement -> (Environment, [MIPSInstruction])
-compileElement (Environment file global local) (FuncDef t funcName args statements) =
-    (Environment finalFile finalGlobal local,
-     Label label : saveStack saveRegs ++ [Empty] ++ body ++ [Empty, Label funcEnd] ++ restoreStack saveRegs ++ [Inst OP_JR "ra" "" ""])
-    where
-        (tempGlobal, (label, funcEnd)) = funcLabel global funcName
+compileElement :: CElement -> State Environment [MIPSInstruction]
+compileElement (FuncDef t funcName args statements) = do
+    Environment file global local <- get
+    let (tempGlobal, (label, funcEnd)) = funcLabel global funcName
         (newLocal, argInstr) = generateArgs args local
-        newGlobal = setCurFunc funcName tempGlobal
-        (Environment finalFile finalGlobal finalLocal, instr) = compileStatements (Environment file newGlobal newLocal) statements
-        body = argInstr ++ instr
-        saveRegs =
-            case find isJAL body of
-                -- We only need to save the return address if there's a jal in the body.
-                Nothing -> getRegsOfType "s" finalLocal
-                Just _ -> "ra" : getRegsOfType "s" finalLocal
+        newGlobal = setCurFunc funcName tempGlobal in do
 
-compileElement (Environment file global local) _ = (Environment file global local, [])
+        put $ Environment file newGlobal newLocal
+        instr <- compileStatements statements
 
-compileStatements :: Environment -> [CStatement] -> (Environment, [MIPSInstruction])
-compileStatements env = foldl go (purgeRegTypeEnv "t" env, [])
+        Environment finalFile finalGlobal finalLocal <- get
+
+        let body = argInstr ++ instr
+            saveRegs =
+                case find isJAL body of
+                    -- We only need to save the return address if there's a jal in the body.
+                    Nothing -> getRegsOfType "s" finalLocal
+                    Just _ -> "ra" : getRegsOfType "s" finalLocal in do
+
+        put $ Environment finalFile finalGlobal local
+
+        pure $ Label label : saveStack saveRegs ++ [Empty] ++ body ++ [Empty, Label funcEnd] ++ restoreStack saveRegs ++ [Inst OP_JR "ra" "" ""]
+
+compileElement _ = pure []
+
+compileStatements :: [CStatement] -> State Environment [MIPSInstruction]
+compileStatements statements = do
+    instr <- foldM go [] statements
+    modify $ purgeRegTypeEnv "t"
+
+    pure instr
     where
-        go (env, instructions) statement =
-            let (newEnv, newInstr) = compileStatement env statement in
-                (newEnv, instructions ++ newInstr)
+        go instructions statement = do
+            env <- get
+            newInstr <- compileStatement statement
+            pure $ instructions ++ newInstr
 
-compileCondition :: String -> Environment -> CExpression -> (Environment, [MIPSInstruction])
-compileCondition falseLabel env st@(CBinaryOp And a b) = (bEnv, aInstr ++ bInstr)
-    where (aEnv, aInstr) = compileCondition falseLabel env a
-          (bEnv, bInstr) = compileCondition falseLabel aEnv b
-compileCondition falseLabel (Environment file global local) st@(CBinaryOp Or a b) =
-    (bEnv, aInstr ++ [Label oneFalseLabel] ++ bInstr)
-    where
-        (newGlobal, oneFalseLabel) = getNextLabel global "one_false"
-        (aEnv, aInstr) = compileCondition oneFalseLabel (Environment file newGlobal local) a
-        (bEnv, bInstr) = compileCondition falseLabel aEnv b
-compileCondition falseLabel env expr@(CBinaryOp op a b)
-    | op `elem` [CEQ, CNE, CLT, CGT, CLTE, CGTE] =
-        (bEnv, aInstr ++ bInstr ++ [Inst opposite aReg bReg falseLabel])
-    | otherwise = compileCondition falseLabel env (CBinaryOp CNE expr (LitInt 0))
-    where opposite = getBranchOpNeg op
-          (aEnv, aReg, aInstr) = compileExpressionTemp env a
-          (bEnv, bReg, bInstr) = compileExpressionTemp aEnv b
-compileCondition falseLabel env expr = compileCondition falseLabel env (CBinaryOp CNE expr (LitInt 0))
+compileCondition :: String -> CExpression -> State Environment [MIPSInstruction]
+compileCondition falseLabel st@(CBinaryOp And a b) =  do
+    aInstr <- compileCondition falseLabel a
+    bInstr <- compileCondition falseLabel b
+
+    pure $ aInstr ++ bInstr
+
+compileCondition falseLabel st@(CBinaryOp Or a b) = do
+    Environment file global local <- get
+    let (newGlobal, oneFalseLabel) = getNextLabel global "one_false" in do
+        put $ Environment file newGlobal local
+
+        aInstr <- compileCondition oneFalseLabel a
+        bInstr <- compileCondition falseLabel b
+        pure $ aInstr ++ [Label oneFalseLabel] ++ bInstr
+
+compileCondition falseLabel expr@(CBinaryOp op a b) = do
+    env <- get
+    let opposite = getBranchOpNeg op in do
+        (aReg, aInstr) <- compileExpressionTemp a
+        (bReg, bInstr) <- compileExpressionTemp b
+
+        if op `elem` [CEQ, CNE, CLT, CGT, CLTE, CGTE] then
+            pure $ aInstr ++ bInstr ++ [Inst opposite aReg bReg falseLabel]
+        else
+            compileCondition falseLabel (CBinaryOp CNE expr (LitInt 0))
+compileCondition falseLabel expr = compileCondition falseLabel (CBinaryOp CNE expr (LitInt 0))
 
 -- Returns the label to go to in order to skip this block.
-handleIfStatement :: Environment -> CStatement -> (Environment, String, [MIPSInstruction])
-handleIfStatement (Environment file global local) st@(ElseBlock statements) =
-    (newEnv, labelEnd, Empty : Comment (readable st) : instr ++ [Label labelEnd])
-    where (newGlobal, labelEnd) = getNextLabel global "else_end"
-          (newEnv, instr) = compileStatements (Environment file newGlobal local) statements
+handleIfStatement :: CStatement -> State Environment (String, [MIPSInstruction])
+handleIfStatement st@(ElseBlock statements) = do
+    Environment file global local <- get
+    let (newGlobal, labelEnd) = getNextLabel global "else_end" in do
+        put $ Environment file newGlobal local
 
-handleIfStatement (Environment file global local) st@(IfStatement cond branches body) =
-    (purgeRegTypeEnv "t" branchEnv, labelEnd,
-     [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ branchInstr)
-    where (globalLabelStart, labelStart) = getNextLabel global "if"
-          (newGlobal, labelEnd) = getNextLabel globalLabelStart "if_end"
-          (newEnv, instr) = compileCondition labelEnd (Environment file newGlobal local) cond
-          (finalEnv, bodyInstr) = compileStatements newEnv body
-          (branchEnv, branchInstr) =
-            case branches of
-                Nothing -> (finalEnv, [Label labelEnd])
-                Just branch ->
-                    let (env, branchEnd, instrs) = handleIfStatement finalEnv branch in
-                        (env, [Inst OP_J branchEnd "" "", Label labelEnd] ++ instrs) -- Make sure to skip this branch.
+        instr <- compileStatements statements
+
+        pure (labelEnd, Empty : Comment (readable st) : instr ++ [Label labelEnd])
+
+handleIfStatement st@(IfStatement cond branches body) = do
+    Environment file global local <- get
+    let (globalLabelStart, labelStart) = getNextLabel global "if"
+        (newGlobal, labelEnd) = getNextLabel globalLabelStart "if_end" in do
+
+        put $ Environment file newGlobal local
+        instr <- compileCondition labelEnd cond
+        finalEnv <- get
+
+        bodyInstr <- compileStatements body
+        case branches of
+            Nothing -> pure (labelEnd, [Label labelEnd])
+            Just branch -> do
+                (branchEnd, instrs) <- handleIfStatement branch
+
+                modify $ purgeRegTypeEnv "t"
+
+                pure (labelEnd, [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ [Inst OP_J branchEnd "" "", Label labelEnd] ++ instrs)
 
 ----------------------------------
 -- Compile statements
 ----------------------------------
-compileStatement :: Environment -> CStatement -> (Environment, [MIPSInstruction])
-compileStatement (Environment file global local) st@(VarDef (Var (Type varKind typeName) varName) ini) =
-    case ini of
-        -- If there's no initializer, all we need to do is take note of the fact that this variable exists
-        Nothing -> (Environment file global newLocal, [Empty, Comment (readable st)])
-        Just (LitInt n) -> (Environment file global newLocal, [Empty, Comment (readable st), Inst OP_LI reg (show n) ""])
-        Just initializer ->
-            let (newEnv, source, instructions) = compileExpressionTemp (Environment file global newLocal) initializer in
-                (purgeRegTypeEnv "t" newEnv, Empty : Comment (readable st) : instructions ++ [Inst OP_MOVE reg source ""])
+compileStatement :: CStatement -> State Environment [MIPSInstruction]
+compileStatement st@(VarDef (Var (Type varKind typeName) varName) ini) = do
+    Environment file global local <- get
 
-    where (newLocal, reg) = useNextRegister "s" varName local
+    let (newLocal, reg) = useNextRegister "s" varName local in do
+        put $ Environment file global newLocal
+        case ini of
+            -- If there's no initializer, all we need to do is take note of the fact that this variable exists
+            Nothing -> pure [Empty, Comment (readable st)]
+            Just (LitInt n) -> pure [Empty, Comment (readable st), Inst OP_LI reg (show n) ""]
+            Just initializer -> do
+                (source, instructions) <- compileExpressionTemp initializer
+                modify $ purgeRegTypeEnv "t"
+                pure $ Empty : Comment (readable st) : instructions ++ [Inst OP_MOVE reg source ""]
 
-compileStatement env ifStatement@IfStatement{} = (newEnv, instr)
-    where (newEnv, _, instr) = handleIfStatement env ifStatement
 
-compileStatement (Environment file global local) st@(WhileStatement cond body) =
-    (purgeRegTypeEnv "t" finalEnv,
-     [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ [Inst OP_J labelStart "" "", Label labelEnd])
-    where (globalLabelStart, labelStart) = getNextLabel global "while"
-          (newGlobal, labelEnd) = getNextLabel globalLabelStart "while_end"
-          (newEnv, instr) = compileCondition labelEnd (Environment file newGlobal local) cond
-          (finalEnv, bodyInstr) = compileStatements newEnv body
+compileStatement ifStatement@IfStatement{} = do
+    (_, instr) <- handleIfStatement ifStatement
+    pure instr
 
-compileStatement env st@(ForStatement ini cond step body) =
-    (purgeRegTypeEnv "t" finalEnv, Empty : Comment (readable st): instrIni ++ instr)
-    where (newEnv, instrIni) = compileStatement env ini
-          (finalEnv, instr) = compileStatement newEnv (WhileStatement cond (body ++ [step]))
+compileStatement st@(WhileStatement cond body) = do
+    Environment file global local <- get
+    let (globalLabelStart, labelStart) = getNextLabel global "while"
+        (newGlobal, labelEnd) = getNextLabel globalLabelStart "while_end" in do
 
-compileStatement env st@(Return expr) =
-    (purgeRegTypeEnv "t" newEnv,
-     Empty : Comment (readable st) : instr ++ [Inst OP_MOVE "v0" source "", Inst OP_J funcEnd "" ""])
-     where (newEnv@(Environment _ global _), source, instr) = compileExpressionTemp env expr
-           (_, funcEnd) = getFuncLabel (getCurFunc global) global
+        put $ Environment file newGlobal local
+        instr <- compileCondition labelEnd cond
+        bodyInstr <- compileStatements body
 
-compileStatement env@(Environment file global local) st@(Assign assignKind lhs rhs) =
-    (purgeRegTypeEnv "t" newEnv,
-     Empty : Comment (readable st) : accessInstr ++ instr ++ postAccessInstr)
-    where
-        assignOp r = case assignKind of
-                Nothing -> [Inst OP_MOVE reg source ""]
-                Just op -> [Inst (opFind op) r r source]
-        (newEnv, source, instr) = compileExpressionTemp (Environment file global newLocal) rhs
-        (newLocal, reg, accessInstr, postAccessInstr) =
-                case lhs of
-                    Left varName -> (local, getRegister varName local, [], assignOp reg)
-                    Right expr@(CArrayAccess _ _) ->
-                        let (Environment _ _ newLocal, dest, accessInstr) = compileExpressionTemp env expr
-                            (finalLocal, tempReg) = useNextRegister "t" "temp_array_load" newLocal in
-                            (finalLocal, dest, init accessInstr, [Inst OP_LW tempReg "0" dest] ++ assignOp tempReg ++ [Inst OP_SW tempReg "0" dest])
-                    Right expr@(CPrefix Dereference (VarRef varName)) ->
-                        let tempReg = getRegister varName local in
-                            (local, tempReg, [], assignOp source ++ [Inst OP_SW source "0" tempReg])
+        modify $ purgeRegTypeEnv "t"
+        pure $ [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ [Inst OP_J labelStart "" "", Label labelEnd]
 
-compileStatement env st@(ExprStatement expr) =
-    let (newEnv, _, instr) = compileExpressionTemp env expr in
-        (purgeRegTypeEnv "t" newEnv, Empty : Comment (readable st) : instr)
+compileStatement st@(ForStatement ini cond step body) = do
+    env <- get
+    instrIni <- compileStatement ini
+    instr <- compileStatement $ WhileStatement cond (body ++ [step])
+
+    modify $ purgeRegTypeEnv "t"
+    pure $ Empty : Comment (readable st) : instrIni ++ instr
+
+compileStatement st@(Return expr) = do
+    env <- get
+
+    (source, instr) <- compileExpressionTemp expr
+
+    Environment _ global _ <- get
+
+    let (_, funcEnd) = getFuncLabel (getCurFunc global) global in do
+        modify $ purgeRegTypeEnv "t"
+        pure $ Empty : Comment (readable st) : instr ++ [Inst OP_MOVE "v0" source "", Inst OP_J funcEnd "" ""]
+
+compileStatement st@(Assign assignKind lhs rhs) = do
+    (source, instr) <- compileExpressionTemp rhs
+
+    env@(Environment file global local) <- get
+
+    (reg, accessInstr, postAccessInstr) <- do
+            let assignOp x r = case assignKind of
+                                Nothing -> [Inst OP_MOVE x source ""]
+                                Just op -> [Inst (opFind op) r r source]
+
+            case lhs of
+                Left varName -> pure (getRegister varName local, [], assignOp (getRegister varName local) (getRegister varName local))
+                Right expr@(CArrayAccess _ _) -> do
+                    (dest, accessInstr) <- compileExpressionTemp expr
+                    Environment _ _ newLocal <- get
+
+                    let (finalLocal, tempReg) = useNextRegister "t" "temp_array_load" newLocal
+
+                    put $ Environment file global finalLocal
+                    pure (dest, init accessInstr, [Inst OP_LW tempReg "0" dest] ++ assignOp dest tempReg ++ [Inst OP_SW tempReg "0" dest])
+                Right expr@(CPrefix Dereference (VarRef varName)) ->
+                    let tempReg = getRegister varName local in
+                        pure (tempReg, [], assignOp tempReg source ++ [Inst OP_SW source "0" tempReg])
+
+    modify $ purgeRegTypeEnv "t"
+    pure $ Empty : Comment (readable st) : accessInstr ++ instr ++ postAccessInstr
+
+compileStatement st@(ExprStatement expr) = do
+    (_, instr) <- compileExpressionTemp expr
+
+    modify $ purgeRegTypeEnv "t"
+    pure $ Empty : Comment (readable st) : instr
 
 ---------------------------------------------
 -- Compile Expression (using temp registers)
 ---------------------------------------------
-compileExpressionTemp :: Environment -> CExpression -> (Environment, String, [MIPSInstruction])
-compileExpressionTemp (Environment file global local) (VarRef varName) = (Environment file global local, getRegister varName local, [])
-compileExpressionTemp (Environment file global local) (LitInt i) =
-    (Environment file global newLocal, reg, [Inst OP_LI reg (show i) ""])
-    where (newLocal, reg) = useNextRegister "t" (show i) local
+compileExpressionTemp :: CExpression -> State Environment (String, [MIPSInstruction])
+compileExpressionTemp (VarRef varName) = do
+    Environment _ _ local <- get
+    pure (getRegister varName local, [])
 
-compileExpressionTemp env (CArrayAccess varName expr) =
-    (Environment file global newLocal, dest,
-     instr ++
-               [Inst OP_MUL dest source $ show size,
-                Inst OP_ADD dest dest reg, -- Calculate address to load.
-                Inst OP_LW dest "0" dest]) -- Load memory
-    where (newEnv@(Environment file global local), source, instr) = compileExpressionTemp env expr
-          (newLocal, dest) = useNextRegister "t" (varName ++ "_access") local
-          (Var varType _) = resolve varName file
-          size = sizeof varType
-          reg = getRegister varName local
+compileExpressionTemp (LitInt i) = do
+    Environment file global local <- get
+    let (newLocal, reg) = useNextRegister "t" (show i) local
+    put $ Environment file global newLocal
 
-compileExpressionTemp env (CBinaryOp op a b) =
-    case op of
-        -- In the case of CEQ, we compare for equality via:
-        -- li reg, 1
-        -- beq a, b, end
-        -- li reg, 0 # Will be skipped if the two are equal
-        -- end:
-        CEQ -> let (newGlobal, endEqualityTest) = getNextLabel global "end_eq_test" in
-                   (Environment file newGlobal newLocal, reg,
-                    aInstr ++ bInstr ++ [Inst OP_LI reg "1" "", Inst OP_BNE aReg bReg endEqualityTest, Inst OP_LI reg "0" "", Label endEqualityTest])
-        _ -> (Environment file global newLocal, reg, aInstr ++ bInstr ++ [Inst (opFind op) reg aReg bReg])
-    where (aEnv, aReg, aInstr) = compileExpressionTemp env a
-          (Environment file global local, bReg, bInstr) = compileExpressionTemp aEnv b
-          (newLocal, reg) = useNextRegister "t" "temp" local
+    pure (reg, [Inst OP_LI reg (show i) ""])
 
-compileExpressionTemp env@(Environment file global local) (CPrefix PreIncrement a) =
-    (Environment file global local, source, instr ++ [Inst OP_ADD source source "1"])
-    where
-        (newEnv, source, instr) = compileExpressionTemp env a
+compileExpressionTemp (CArrayAccess varName expr) = do
+    env <- get
+    (source, instr) <- compileExpressionTemp expr
+    newEnv@(Environment file global local) <- get
 
-compileExpressionTemp env@(Environment file global local) (CPrefix PreDecrement a) =
-    (Environment file global local, source, instr ++ [Inst OP_SUB source source "1"])
-    where
-        (newEnv, source, instr) = compileExpressionTemp env a
+    let (newLocal, dest) = useNextRegister "t" (varName ++ "_access") local
+        (Var varType _) = resolve varName file
+        size = sizeof varType
+        reg = getRegister varName local in do
 
-compileExpressionTemp env (CPrefix Dereference a) =
-    (Environment file global newLocal, source, instr ++ [Inst OP_LW reg source ""])
-    where
-        (Environment file global local, source, instr) = compileExpressionTemp env a
-        (newLocal, reg) = useNextRegister "t" "temp" local
+        put $ Environment file global newLocal
+        pure (dest,
+                 instr ++ [Inst OP_MUL dest source $ show size,
+                           Inst OP_ADD dest dest reg, -- Calculate address to load.
+                           Inst OP_LW dest "0" dest]) -- Load memory
 
-compileExpressionTemp env (CPrefix PreNot a) =
-    (Environment file newGlobal newLocal, reg, instr ++ [Inst OP_LI reg "1" "", Inst OP_BEQ source "0" endNot, Inst OP_LI reg "0" "", Label endNot])
-    where
-        (Environment file global local, source, instr) = compileExpressionTemp env a
-        (newGlobal, endNot) = getNextLabel global "end_not"
-        (newLocal, reg) = useNextRegister "t" "temp" local
+compileExpressionTemp (CBinaryOp op a b) = do
+    (aReg, aInstr) <- compileExpressionTemp a
+    (bReg, bInstr) <- compileExpressionTemp b
+    Environment file global local <- get
+    let (newLocal, reg) = useNextRegister "t" "temp" local in
+        case op of
+            -- In the case of CEQ, we compare for equality via:
+            -- li reg, 1
+            -- beq a, b, end
+            -- li reg, 0 # Will be skipped if the two are equal
+            -- end:
+            CEQ -> let (newGlobal, endEqualityTest) = getNextLabel global "end_eq_test" in do
+                put $ Environment file newGlobal newLocal
+                pure (reg, aInstr ++ bInstr ++ [Inst OP_LI reg "1" "", Inst OP_BNE aReg bReg endEqualityTest, Inst OP_LI reg "0" "", Label endEqualityTest])
+            _ -> do
+                put $ Environment file global newLocal
+                pure (reg, aInstr ++ bInstr ++ [Inst (opFind op) reg aReg bReg])
 
-compileExpressionTemp env (CPostfix PostIncrement a) =
-    (env, source, instr ++ [Inst OP_ADD source source "1"])
-    where
-        (newEnv, source, instr) = compileExpressionTemp env a
+compileExpressionTemp (CPrefix PreIncrement a) = do
+    (source, instr) <- compileExpressionTemp a
+    pure (source, instr ++ [Inst OP_ADD source source "1"])
 
-compileExpressionTemp env (CPostfix PostDecrement a) =
-    (newEnv, source, instr ++ [Inst OP_SUB source source "1"])
-    where
-        (newEnv, source, instr) = compileExpressionTemp env a
+compileExpressionTemp (CPrefix PreDecrement a) = do
+    (source, instr) <- compileExpressionTemp a
+    pure (source, instr ++ [Inst OP_SUB source source "1"])
 
-compileExpressionTemp env (FuncCall funcName args) =
-    (Environment file global newLocal, reg,
-     instr ++ argLoading ++
-        [Inst OP_JAL funcLabel "" "",
-         Inst OP_MOVE reg "v0" ""]) -- Make sure to save func call result.
-    where
-        (newLocal, reg) = useNextRegister "t" "func_call_return_val" local
-        (funcLabel, _) = getFuncLabel funcName global
-        (Environment file global local, regs, instr) = foldl go (env, [], []) args
-        argLoading = map (\(i, r) -> Inst OP_MOVE ("a" ++ show i) r "") $ zip [0..] regs
-        go (curEnv, curRegs, curInstr) expr =
-            let (newEnv, reg, newInstr) = compileExpressionTemp curEnv expr in
-                (newEnv, curRegs ++ [reg], curInstr ++ newInstr)
+compileExpressionTemp (CPrefix Dereference a) = do
+    Environment file global local <- get
+    let (newLocal, reg) = useNextRegister "t" "temp" local in do
+        put $ Environment file global newLocal
+
+        (source, instr) <- compileExpressionTemp a
+        pure (source, instr ++ [Inst OP_LW reg source ""])
+
+compileExpressionTemp (CPrefix PreNot a) = do
+    (source, instr) <- compileExpressionTemp a
+    Environment file global local <- get
+
+    let (newGlobal, endNot) = getNextLabel global "end_not"
+        (newLocal, reg) = useNextRegister "t" "temp" local in do
+
+        put $ Environment file newGlobal newLocal
+        pure (reg, instr ++ [Inst OP_LI reg "1" "", Inst OP_BEQ source "0" endNot, Inst OP_LI reg "0" "", Label endNot])
+
+compileExpressionTemp (CPostfix PostIncrement a) = do
+    (source, instr) <- compileExpressionTemp a
+    pure (source, instr ++ [Inst OP_ADD source source "1"])
+
+compileExpressionTemp (CPostfix PostDecrement a) = do
+    (source, instr) <- compileExpressionTemp a
+    pure (source, instr ++ [Inst OP_SUB source source "1"])
+
+compileExpressionTemp (FuncCall funcName args) = do
+    env <- get
+    let go (curRegs, curInstr) expr = do
+            (reg, newInstr) <- compileExpressionTemp expr
+            pure (curRegs ++ [reg], curInstr ++ newInstr) in do
+
+        (regs, instr) <- foldM go ([], []) args
+
+        Environment file global local <- get
+
+        let (newLocal, reg) = useNextRegister "t" "func_call_return_val" local
+            (funcLabel, _) = getFuncLabel funcName global
+            argLoading = map (\(i, r) -> Inst OP_MOVE ("a" ++ show i) r "") $ zip [0..] regs
+
+        put $ Environment file global newLocal
+        pure (reg,
+                 instr ++ argLoading ++
+                    [Inst OP_JAL funcLabel "" "",
+                     Inst OP_MOVE reg "v0" ""]) -- Make sure to save func call result.
 
