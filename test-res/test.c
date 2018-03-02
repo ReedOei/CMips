@@ -1,5 +1,7 @@
-int f(char *x, int y) {
-    x[y + 4] = 4;
+int f(int x, int y) {
+    if (x > y) {
+        return x;
+    }
 
     return 0;
 }

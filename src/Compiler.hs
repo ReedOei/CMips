@@ -222,14 +222,15 @@ handleIfStatement st@(IfStatement cond branches body) = do
     finalEnv <- get
 
     bodyInstr <- compileStatements body
-    case branches of
-        Nothing -> pure (labelEnd, [Label labelEnd])
-        Just branch -> do
-            (branchEnd, instrs) <- handleIfStatement branch
+    branchInstr <-
+        case branches of
+            Nothing -> pure [Label labelEnd]
+            Just branch -> do
+                (branchEnd, instrs) <- handleIfStatement branch
+                pure $ [Inst OP_J branchEnd "" "", Label labelEnd] ++ instrs
 
-            modify $ purgeRegTypeEnv "t"
-
-            pure (labelEnd, [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ [Inst OP_J branchEnd "" "", Label labelEnd] ++ instrs)
+    modify $ purgeRegTypeEnv "t"
+    pure (labelEnd, [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ branchInstr)
 
 ----------------------------------
 -- Compile statements
@@ -301,7 +302,7 @@ compileStatement st@(Assign assignKind lhs rhs) = do
 
                     tempReg <- useNextRegister "t" "temp_array_load"
 
-                    pure (dest, init accessInstr, [Inst OP_LW tempReg "0" dest] ++ assignOp dest tempReg ++ [Inst OP_SW tempReg "0" dest])
+                    pure (dest, init accessInstr, [Inst OP_LW tempReg "0" dest] ++ assignOp tempReg tempReg ++ [Inst OP_SW tempReg "0" dest])
                 Right expr@(CPrefix Dereference (VarRef varName)) -> do
                     tempReg <- getRegister varName
 
@@ -341,9 +342,17 @@ compileExpressionTemp (CArrayAccess varName expr) = do
                        Inst OP_LW dest "0" dest]) -- Load memory
 
 compileExpressionTemp (CBinaryOp op a b) = do
-    (aReg, aInstr) <- compileExpressionTemp a
-    (bReg, bInstr) <- compileExpressionTemp b
 
+    (aReg, aInstr) <-
+        case b of
+            FuncCall{} -> do -- If it's a func call, make sure we save the aReg
+                (tempReg, instr) <- compileExpressionTemp a
+                savedReg <- useNextRegister "s" "temp_for_func_call"
+
+                pure (savedReg, instr ++ [Inst OP_MOVE savedReg tempReg ""])
+            _ -> compileExpressionTemp a
+
+    (bReg, bInstr) <- compileExpressionTemp b
     reg <- useNextRegister "t" "temp"
 
     case op of
@@ -354,7 +363,7 @@ compileExpressionTemp (CBinaryOp op a b) = do
         -- end:
         CEQ -> do
             endEqualityTest <- getNextLabel "end_eq_test"
-            pure (reg, aInstr ++ bInstr ++ [Inst OP_LI reg "1" "", Inst OP_BNE aReg bReg endEqualityTest, Inst OP_LI reg "0" "", Label endEqualityTest])
+            pure (reg, aInstr ++ bInstr ++ [Inst OP_LI reg "1" "", Inst OP_BEQ aReg bReg endEqualityTest, Inst OP_LI reg "0" "", Label endEqualityTest])
         _ -> pure (reg, aInstr ++ bInstr ++ [Inst (opFind op) reg aReg bReg])
 
 compileExpressionTemp (CPrefix PreIncrement a) = do
