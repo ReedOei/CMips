@@ -27,6 +27,8 @@ newtype Local = Local (Map String String) -- Map of registers to variable names.
     deriving Show
 
 sizeof :: Type -> Int
+sizeof (NamedType "double") = 8
+sizeof (NamedType _) = 4
 sizeof (Type Pointer _) = 4
 sizeof _ = 4
 
@@ -364,20 +366,28 @@ compileStatement st@(Assign assignKind lhs rhs) = do
                                 Nothing -> [Inst OP_MOVE x source ""]
                                 Just op -> [Inst (opFind op) r r source]
 
-            case lhs of
-                Left varName -> do
-                    tempReg <- getRegister varName
-                    pure (tempReg, [], assignOp tempReg tempReg)
-                Right expr@(CArrayAccess _ _) -> do
-                    (dest, accessInstr) <- compileExpressionTemp expr
+            (reg, instr) <- compileExpressionTemp lhs
 
-                    tempReg <- useNextRegister "t" "temp_array_load"
+            if not $ null instr then
+                case last instr of
+                    Inst OP_LW target offset loadSource -> do
+                        tempReg <- useNextRegister "t" "temp_load"
+                        pure (tempReg, init instr, assignOp target target ++ [Inst OP_SW target offset tempReg])
+                    inst -> error $ "Unexpected instruction for assign expression: " ++ show st ++ " " ++ show inst
+            else
+                pure (reg, [], assignOp reg reg)
 
-                    pure (dest, init accessInstr, [Inst OP_LW tempReg "0" dest] ++ assignOp tempReg tempReg ++ [Inst OP_SW tempReg "0" dest])
-                Right expr@(CPrefix Dereference (VarRef varName)) -> do
-                    tempReg <- getRegister varName
+            -- case lhs of
+            --     Right expr@(CArrayAccess _ _) -> do
+            --         (dest, accessInstr) <- compileExpressionTemp expr
 
-                    pure (tempReg, [], assignOp tempReg source ++ [Inst OP_SW source "0" tempReg])
+            --         tempReg <- useNextRegister "t" "temp_array_load"
+
+            --         pure (dest, init accessInstr, [Inst OP_LW tempReg "0" dest] ++ assignOp tempReg tempReg ++ [Inst OP_SW tempReg "0" dest])
+            --     Right expr@(CPrefix Dereference (VarRef varName)) -> do
+            --         tempReg <- getRegister varName
+
+            --         pure (tempReg, [], assignOp tempReg source ++ [Inst OP_SW source "0" tempReg])
 
     modify $ purgeRegTypeEnv "t"
     pure $ Empty : Comment (readable st) : accessInstr ++ instr ++ postAccessInstr
@@ -401,6 +411,8 @@ compileExpressionTemp (LitInt i) = do
 compileExpressionTemp (LitChar c) = do
     reg <- useNextRegister "t" $ show $ ord c
     pure (reg, [Inst OP_LI reg (show (ord c)) ""])
+
+compileExpressionTemp NULL =  pure ("0", [])
 
 compileExpressionTemp (CArrayAccess varName expr) = do
     (source, instr) <- compileExpressionTemp expr
@@ -450,7 +462,7 @@ compileExpressionTemp (CPrefix PreDecrement a) = do
 compileExpressionTemp (CPrefix Dereference a) = do
     reg <- useNextRegister "t" "temp"
     (source, instr) <- compileExpressionTemp a
-    pure (source, instr ++ [Inst OP_LW reg "0" source])
+    pure (reg, instr ++ [Inst OP_LW reg "0" source])
 
 compileExpressionTemp (CPrefix PreNot a) = do
     (source, instr) <- compileExpressionTemp a
@@ -471,7 +483,9 @@ compileExpressionTemp (MemberAccess expr (VarRef name)) = do
     (source, instr) <- compileExpressionTemp expr
     n <- getStructOffset expr name
 
-    pure (source, instr ++ [Inst OP_LW source (show n) source])
+    case last instr of
+        Inst OP_LW a _ b -> pure (source, init instr ++ [Inst OP_LW a (show n) b])
+        _ -> pure (source, instr ++ [Inst OP_LW source (show n) source])
 
 compileExpressionTemp (FuncCall funcName args) = do
     env <- get

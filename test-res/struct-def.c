@@ -1,11 +1,15 @@
 struct node_t {
     int * data; // pointer to an integer
-    int x;
-    int y;
+    int test;
     node_t * next; // pointer to another node_t
 };
 
 int sum(node_t *node) {
-    return node->next;
+    if (node == NULL) {
+        return 0;
+    }
+
+    node->test = *(node->data) + sum(node->next);
+    return node->test;
 }
 

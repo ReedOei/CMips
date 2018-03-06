@@ -129,7 +129,7 @@ typeParser :: CharParser st Type
 typeParser = do
     wsSkip
     typeName <- do
-        mod <- many (choice [string "long", string "unsigned"] >>= (\str -> char ' ' >> pure str))
+        mod <- many (choice [string "struct", string "long", string "unsigned"] >>= (\str -> char ' ' >> pure str))
         t <- cIdentifier
         notFollowedBy (char '(')
         return $ unwords $ mod ++ [t]
@@ -193,9 +193,7 @@ returnParser = do
 
 assignParser :: CharParser st CStatement
 assignParser = do
-    lhs <- try (Right <$> arrayAccessParser) <|>
-           try (Right <$> prefixParser) <|>
-           Left <$> cIdentifier
+    lhs <- try expressionParser
     wsSkip
     assignOp <- optionMaybe $ choice $ map (try . string . fst) cArithOps
     char '='
@@ -295,14 +293,14 @@ readNum = do
 
 expressionParser :: CharParser st CExpression
 expressionParser =
-                   try prefixParser <|>
                    try postfixParser <|>
                    try cArithParser <|>
+                   try prefixParser <|>
                    try memberAccessParser <|>
+                   try nullParser <|>
                    try (VarRef <$> cIdentifier) <|>
                    try arrayAccessParser <|>
                    try funcCallParser <|>
-                   try nullParser <|>
                    try charParser <|>
                    LitInt <$> readNum
 
@@ -310,8 +308,8 @@ accessOperandParser :: CharParser st CExpression
 accessOperandParser = try (between (char '(') (char ')') (try expressionParser <|> try prefixParser <|> try postfixParser)) <|>
                       try arrayAccessParser <|>
                       try funcCallParser <|>
-                      try (VarRef <$> cIdentifier) <|>
                       try nullParser <|>
+                      try (VarRef <$> cIdentifier) <|>
                       try charParser <|>
                       LitInt <$> readNum
 
@@ -349,11 +347,13 @@ arrayAccessParser = do
 
 operandParser :: CharParser st CExpression
 operandParser = try memberAccessParser <|>
-                try (between (char '(') (char ')') (try expressionParser <|> try prefixParser <|> try postfixParser)) <|>
+                try prefixParser <|>
+                try postfixParser <|>
+                try (between (char '(') (char ')') (try expressionParser)) <|>
                 try arrayAccessParser <|>
                 try funcCallParser <|>
-                try (VarRef <$> cIdentifier) <|>
                 try nullParser <|>
+                try (VarRef <$> cIdentifier) <|>
                 try charParser <|>
                 LitInt <$> readNum
 
@@ -365,19 +365,42 @@ funcCallParser = do
 
     pure $ FuncCall funcName arguments
 
+prefixOperandParser :: CharParser st CExpression
+prefixOperandParser = try memberAccessParser <|>
+                      try postfixParser <|>
+                      try (between (char '(') (char ')') (try expressionParser)) <|>
+                      try arrayAccessParser <|>
+                      try funcCallParser <|>
+                      try nullParser <|>
+                      try (VarRef <$> cIdentifier) <|>
+                      try charParser <|>
+                      LitInt <$> readNum
+
 prefixParser :: CharParser st CExpression
 prefixParser = do
     op <- choice $ map (try . string . fst) cPrefixOps
     wsSkip
-    var <- operandParser
+    var <- prefixOperandParser
 
     case lookup op cPrefixOps of
         Nothing -> fail $ "Unknown prefix operation: " ++ op
         Just prefixOp -> pure $ CPrefix prefixOp var
 
+postfixOperandParser :: CharParser st CExpression
+postfixOperandParser = try memberAccessParser <|>
+                       try prefixParser <|>
+                       try (between (char '(') (char ')') (try expressionParser)) <|>
+                       try arrayAccessParser <|>
+                       try funcCallParser <|>
+                       try nullParser <|>
+                       try (VarRef <$> cIdentifier) <|>
+                       try charParser <|>
+                       LitInt <$> readNum
+
+
 postfixParser :: CharParser st CExpression
 postfixParser = do
-    var <- operandParser
+    var <- postfixOperandParser
     wsSkip
     op <- choice $ map (try . string . fst) cPostfixOps
 
