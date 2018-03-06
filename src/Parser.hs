@@ -38,6 +38,7 @@ cElementList = filter (/= MiscElement) <$> sepEndBy cElement (many1 (char '\n'))
 cElement :: CharParser st CElement
 cElement = try preprocessorParser <|>
              try functionParser <|>
+             try structParser <|>
              pure MiscElement
 
 cIdentifier :: CharParser st String
@@ -82,6 +83,27 @@ preprocessorParser = do
 
     return $ Preprocessor preKind val
 
+structParser :: CharParser st CElement
+structParser = do
+    wsSkip
+    optional $ string "typename"
+    wsSkip
+    string "struct"
+
+    wsSkip
+    name <- cIdentifier
+    wsSkip
+
+    varDefs <- block
+
+    wsSkip
+    optional cIdentifier
+    wsSkip
+
+    char ';' -- block ends with }, but structs end with };
+
+    pure $ StructDef name $ map (\(VarDef var _) -> var) varDefs
+
 functionParser :: CharParser st CElement
 functionParser = do
     returnType <- typeParser
@@ -113,14 +135,14 @@ typeParser = do
         return $ unwords $ mod ++ [t]
 
     wsSkip
-    varKindStr <- optionMaybe $ char '*'
+    varKindStr <- optionMaybe $ many $ char '*'
     wsSkip
 
     let varKind = case varKindStr of
-                      Just '*' -> Pointer
-                      Nothing -> Value
+                      Just ('*':_) -> Pointer
+                      _ -> Value
 
-    return $ Type varKind typeName
+    return $ Type varKind $ NamedType typeName
 
 statementParser :: CharParser st CStatement
 statementParser = do
@@ -272,13 +294,51 @@ readNum = do
     pure $ sign * fromInteger (read digits)
 
 expressionParser :: CharParser st CExpression
-expressionParser = try prefixParser <|>
+expressionParser =
+                   try prefixParser <|>
                    try postfixParser <|>
                    try cArithParser <|>
+                   try memberAccessParser <|>
                    try (VarRef <$> cIdentifier) <|>
                    try arrayAccessParser <|>
                    try funcCallParser <|>
+                   try nullParser <|>
+                   try charParser <|>
                    LitInt <$> readNum
+
+accessOperandParser :: CharParser st CExpression
+accessOperandParser = try (between (char '(') (char ')') (try expressionParser <|> try prefixParser <|> try postfixParser)) <|>
+                      try arrayAccessParser <|>
+                      try funcCallParser <|>
+                      try (VarRef <$> cIdentifier) <|>
+                      try nullParser <|>
+                      try charParser <|>
+                      LitInt <$> readNum
+
+memberAccessParser :: CharParser st CExpression
+memberAccessParser = do
+    wsSkip
+    a <- accessOperandParser
+    accessOpStr <- string "." <|> string "->"
+    b <- try memberAccessParser <|>
+         try (VarRef <$> cIdentifier)
+
+    case accessOpStr of
+        "." -> pure $ MemberAccess a b
+        "->" -> pure $ MemberAccess (CPrefix Dereference a) b
+
+nullParser :: CharParser st CExpression
+nullParser = string "NULL" >> pure NULL
+
+charParser :: CharParser st CExpression
+charParser = do
+    wsSkip
+    char '\''
+    c <- anyChar
+    char '\''
+    wsSkip
+
+    pure $ LitChar c
 
 arrayAccessParser :: CharParser st CExpression
 arrayAccessParser = do
@@ -288,10 +348,13 @@ arrayAccessParser = do
     pure $ CArrayAccess name expr
 
 operandParser :: CharParser st CExpression
-operandParser = try (between (char '(') (char ')') (expressionParser <|> prefixParser <|> postfixParser)) <|>
+operandParser = try memberAccessParser <|>
+                try (between (char '(') (char ')') (try expressionParser <|> try prefixParser <|> try postfixParser)) <|>
                 try arrayAccessParser <|>
                 try funcCallParser <|>
                 try (VarRef <$> cIdentifier) <|>
+                try nullParser <|>
+                try charParser <|>
                 LitInt <$> readNum
 
 funcCallParser :: CharParser st CExpression

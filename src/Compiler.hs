@@ -5,6 +5,7 @@ module Compiler where
 import Control.Monad
 import Control.Monad.State
 
+import Data.Char (ord)
 import Data.List (isPrefixOf, find)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -26,15 +27,13 @@ newtype Local = Local (Map String String) -- Map of registers to variable names.
     deriving Show
 
 sizeof :: Type -> Int
-sizeof (Type _ "char") = 1
-sizeof (Type _ "unsigned char") = 1
-sizeof (Type _ "unsigned int") = 4
-sizeof (Type _ "int") = 4
+sizeof (Type Pointer _) = 4
 sizeof _ = 4
 
 findTypesElement :: CElement -> [Var]
 findTypesElement (FuncDef _ _ vars statements) =
     vars ++ concatMap findTypesStatement statements
+findTypesElement StructDef{} = []
 
 findTypesStatement :: CStatement -> [Var]
 findTypesStatement (VarDef var _) = [var]
@@ -44,10 +43,82 @@ findTypesStatement (ElseBlock statements) = concatMap findTypesStatement stateme
 findTypesStatement (WhileStatement _ statements) = concatMap findTypesStatement statements
 findTypesStatement _ = []
 
-resolve :: String -> CFile -> Var
-resolve refName (CFile _ elements) =
-    fromMaybe (error ("Unknown reference to: " ++ refName)) $
-        find (\(Var _ varName) -> varName == refName) $ concatMap findTypesElement elements
+findFuncCall :: String -> [CElement] -> Maybe CElement
+findFuncCall _ [] = Nothing
+findFuncCall funcName (f@(FuncDef _ checkName _ _):rest)
+    | funcName == checkName = Just f
+    | otherwise = findFuncCall funcName rest
+findFuncCall funcName (_:rest) = findFuncCall funcName rest
+
+findStructDef :: String -> [CElement] -> Maybe CElement
+findStructDef _ [] = Nothing
+findStructDef structName (s@(StructDef checkName _):rest)
+    | structName == checkName = Just s
+    | otherwise = findStructDef structName rest
+findStructDef structName (_:rest) = findStructDef structName rest
+
+-- Returns the offset of the member of the struct.
+getStructOffset :: CExpression -> String -> State Environment Int
+getStructOffset expr member = do
+    StructType (StructDef _ members) <- resolveType expr >>= elaborateType
+
+    let varTypes = map (\(Var varType _) -> varType) $ takeWhile (\(Var _ name) -> name /= member) members
+    foldM (\n t -> do
+                newT <- elaborateType t
+                pure $ n + sizeof newT) 0 varTypes
+
+resolveFuncCall :: String -> State Environment CElement
+resolveFuncCall funcName = do
+    Environment (CFile _ elements) _ _ <- get
+
+    case findFuncCall funcName elements of
+        Nothing -> error $ "Unresolved reference to function: " ++ funcName
+        Just f -> pure f
+
+elaborateType :: Type -> State Environment Type
+elaborateType (NamedType structName) = do
+    Environment (CFile _ elements) _ _ <- get
+    case findStructDef structName elements of
+        Nothing -> pure $ NamedType structName
+        Just struct -> pure $ StructType struct
+elaborateType (Type varKind t) = Type varKind <$> elaborateType t
+elaborateType t = pure t
+
+resolve :: String -> State Environment Var
+resolve refName = do
+    Environment (CFile _ elements) _ _ <- get
+    pure $ fromMaybe (error ("Unknown reference to: " ++ refName)) $
+                find (\(Var _ varName) -> varName == refName) $ concatMap findTypesElement elements
+
+resolveType :: CExpression -> State Environment Type
+resolveType (VarRef str) = resolve str >>= (\(Var varType _) -> pure varType)
+resolveType (LitInt n) = pure $ Type Value $ NamedType "int"
+resolveType (LitChar n) = pure $ Type Value $ NamedType "char"
+resolveType NULL = pure $ Type Pointer $ NamedType "void"
+
+resolveType (CPrefix Dereference expr) = do
+    t <- resolveType expr
+
+    case t of
+        Type Pointer a -> pure a
+        _ -> error $ "Cannot dereference non-pointer type: " ++ show t
+resolveType (CPrefix _ expr) = resolveType expr
+
+resolveType (CArrayAccess name expr) = resolveType $ CPrefix Dereference (VarRef name)
+resolveType (CPostfix _ expr) = resolveType expr
+resolveType (FuncCall funcName _) = do
+    FuncDef t _ _ _ <- resolveFuncCall funcName
+    pure t
+resolveType (MemberAccess accessExpr toAccess) = resolveType accessExpr
+resolveType expr@(CBinaryOp _ a b) = do
+    aType <- resolveType a
+    bType <- resolveType b
+
+    if aType == bType then
+        pure aType
+    else
+        error $ "Types in expression '" ++ readableExpr expr ++ "' don't match (" ++ show aType ++ " and " ++ show bType ++ ")"
+                 -- | MemberAccess CExpression CExpression
 
 useNextRegister :: String -> String -> State Environment String
 useNextRegister rtype str = do
@@ -327,17 +398,19 @@ compileExpressionTemp (LitInt i) = do
     reg <- useNextRegister "t" $ show i
     pure (reg, [Inst OP_LI reg (show i) ""])
 
+compileExpressionTemp (LitChar c) = do
+    reg <- useNextRegister "t" $ show $ ord c
+    pure (reg, [Inst OP_LI reg (show (ord c)) ""])
+
 compileExpressionTemp (CArrayAccess varName expr) = do
     (source, instr) <- compileExpressionTemp expr
 
     dest <- useNextRegister "t" $ varName ++ "_access"
-    Environment file _ _ <- get
-    let (Var varType _) = resolve varName file
-        size = sizeof varType
+    Var varType _ <- resolve varName
 
     reg <- getRegister varName
     pure (dest,
-             instr ++ [Inst OP_MUL dest source $ show size,
+             instr ++ [Inst OP_MUL dest source $ show $ sizeof varType,
                        Inst OP_ADD dest dest reg, -- Calculate address to load.
                        Inst OP_LW dest "0" dest]) -- Load memory
 
@@ -377,7 +450,7 @@ compileExpressionTemp (CPrefix PreDecrement a) = do
 compileExpressionTemp (CPrefix Dereference a) = do
     reg <- useNextRegister "t" "temp"
     (source, instr) <- compileExpressionTemp a
-    pure (source, instr ++ [Inst OP_LW reg source ""])
+    pure (source, instr ++ [Inst OP_LW reg "0" source])
 
 compileExpressionTemp (CPrefix PreNot a) = do
     (source, instr) <- compileExpressionTemp a
@@ -393,6 +466,12 @@ compileExpressionTemp (CPostfix PostIncrement a) = do
 compileExpressionTemp (CPostfix PostDecrement a) = do
     (source, instr) <- compileExpressionTemp a
     pure (source, instr ++ [Inst OP_SUB source source "1"])
+
+compileExpressionTemp (MemberAccess expr (VarRef name)) = do
+    (source, instr) <- compileExpressionTemp expr
+    n <- getStructOffset expr name
+
+    pure (source, instr ++ [Inst OP_LW source (show n) source])
 
 compileExpressionTemp (FuncCall funcName args) = do
     env <- get

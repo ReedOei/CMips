@@ -14,7 +14,9 @@ data PreKind = Include
              | MiscPreKind
     deriving (Show, Eq)
 
-data Type = Type VarKind String
+data Type = NamedType String
+          | Type VarKind Type
+          | StructType CElement
     deriving (Show, Eq)
 
 data Var = Var Type String
@@ -22,6 +24,7 @@ data Var = Var Type String
 
 data CElement = Preprocessor PreKind String
                 | FuncDef Type String [Var] [CStatement]
+                | StructDef String [Var]
                 | MiscElement
     deriving (Show, Eq)
 
@@ -52,7 +55,10 @@ data BinaryOp = Add | Minus | CGT | CLT | CGTE | CLTE | CNE | CEQ |
     deriving (Show, Eq)
 
 data CExpression = VarRef String
+                 | MemberAccess CExpression CExpression
                  | LitInt Int
+                 | LitChar Char
+                 | NULL
                  | FuncCall String [CExpression]
                  | CPrefix PrefixOp CExpression
                  | CPostfix PostfixOp CExpression
@@ -88,8 +94,9 @@ readablePostfix op =
         lookup op $ map(\(a, b) -> (b, a)) cPostfixOps
 
 readableType :: Type -> String
-readableType (Type Pointer typeName) = typeName ++ " *"
-readableType (Type Value typeName) = typeName
+readableType (NamedType name) = name
+readableType (Type Pointer t) = readableType t ++ " *"
+readableType (Type Value t) = readableType t
 
 readableVar :: Var -> String
 readableVar (Var t varName) = readableType t ++ " " ++ varName
@@ -112,10 +119,14 @@ readable (Assign op (Right access) expr) = readableExpr access ++ " " ++ maybeOp
 
 readableExpr :: CExpression -> String
 readableExpr (LitInt n) = show n
+readableExpr (LitChar c) = show c
+readableExpr NULL = "NULL"
 readableExpr (VarRef x) = x
 readableExpr (CBinaryOp op a b) = "(" ++ readableExpr a ++ " " ++ readableOp op ++ " " ++ readableExpr b ++ ")"
 readableExpr (FuncCall funcName args) = funcName ++ "(" ++ intercalate ", " (map readableExpr args) ++ ")"
+readableExpr (CPrefix Dereference expr) = "(" ++ readablePrefix Dereference ++ readableExpr expr ++ ")"
 readableExpr (CPrefix op expr) = readablePrefix op ++ readableExpr expr
 readableExpr (CPostfix op expr) = readableExpr expr ++ readablePostfix op
 readableExpr (CArrayAccess varName expr) = varName ++ "[" ++ readableExpr expr ++ "]"
+readableExpr (MemberAccess a b) = readableExpr a ++ "." ++ readableExpr b
 

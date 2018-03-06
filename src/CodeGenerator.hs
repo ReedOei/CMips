@@ -13,6 +13,7 @@ generateFile :: MIPSFile -> String
 generateFile (MIPSFile _ instructions) = intercalate "\n\n" $ map generate instructions
 
 generate :: [MIPSInstruction] -> String
+generate [] = ""
 generate (inst:instructions) =
     generateInstruction inst ++ "\n" ++
     intercalate "\n" (map (("    " ++) . generateInstruction) instructions)
