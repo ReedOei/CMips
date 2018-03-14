@@ -1,9 +1,9 @@
-module CodeGenerator where
+module Compiler.CodeGenerator where
 
 import Data.Char (isAlpha)
 import Data.List (intercalate)
 
-import Compiler
+import Compiler.Compiler
 import MIPSLanguage
 
 printCode :: MIPSFile -> IO ()

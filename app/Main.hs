@@ -7,8 +7,8 @@ import System.Console.GetOpt
 
 import Text.ParserCombinators.Parsec
 
-import Compiler
-import CodeGenerator
+import Compiler.Compiler
+import Compiler.CodeGenerator
 import Parser
 
 options :: [OptDescr String]
