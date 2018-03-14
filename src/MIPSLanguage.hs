@@ -37,6 +37,7 @@ data MIPSOp = OP_ADD
             | OP_J
             | OP_JR
             | OP_JAL
+            | OP_JALR
             | OP_SLL
             | OP_SRL
             | OP_REM
@@ -69,6 +70,7 @@ mnemonic OP_BEQ = "beq"
 mnemonic OP_J = "j"
 mnemonic OP_JR = "jr"
 mnemonic OP_JAL = "jal"
+mnemonic OP_JALR = "jalr"
 mnemonic OP_SLL = "sll"
 mnemonic OP_SRL = "srl"
 mnemonic OP_NOT = "not"
@@ -99,5 +101,6 @@ getBranchOpNeg CGTE = OP_BLT
 getBranchOpNeg CNE = OP_BEQ
 
 isJAL (Inst OP_JAL _ _ _) = True
+isJAL (Inst OP_JALR _ _ _) = True
 isJAL _ = False
 

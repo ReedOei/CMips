@@ -11,7 +11,7 @@ printCode = putStrLn . generateFile
 
 generateFile :: MIPSFile -> String
 generateFile (MIPSFile _ sections instructions) =
-    intercalate "\n\n" (map generateSection sections) ++
+    intercalate "\n\n" (filter (not . null) (map generateSection sections)) ++ "\n" ++
     intercalate "\n\n" (map generate instructions)
 
 generateSection :: MIPSSection -> String
@@ -52,6 +52,7 @@ generateInstruction (Inst funct rd rs rt) =
         OP_SB -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
         OP_J -> mnemonic funct ++ " " ++ rd
         OP_JR -> mnemonic funct ++ " $" ++ rd
+        OP_JALR -> mnemonic funct ++ " $" ++ rd
         OP_JAL -> mnemonic funct ++ " " ++ rd
         OP_BNE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
         OP_BEQ -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt

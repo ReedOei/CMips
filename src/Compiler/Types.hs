@@ -106,10 +106,10 @@ funcLabel funcName = do
     put $ Environment file d (Global labels (Map.insert funcName (funcLabel, funcEnd) funcs) curFunc) local
     pure (funcLabel, funcEnd)
 
-getFuncLabel :: String -> State Environment (String, String)
+getFuncLabel :: String -> State Environment (Maybe (String, String))
 getFuncLabel funcName = do
     Environment _ _ (Global _ funcs _) _ <- get
-    pure $ fromMaybe (error ("Undefined reference to: " ++ funcName)) $ Map.lookup funcName funcs
+    pure $ Map.lookup funcName funcs
 
 purgeRegType :: String -> Local -> Local
 purgeRegType rType (Local registers) = Local $ Map.filterWithKey (\k _ -> not (rType `isPrefixOf` k)) registers

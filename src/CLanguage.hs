@@ -16,6 +16,7 @@ data PreKind = Include
 
 data Type = NamedType String
           | Type VarKind Type
+          | FunctionPointer Type [Type] -- Return type and argument types.
           | StructType CElement
     deriving (Show, Eq)
 
@@ -43,6 +44,7 @@ data PrefixOp = PreIncrement
               | PreDecrement
               | PreNot
               | Dereference
+              | AddressOf
     deriving (Show, Eq)
 
 data PostfixOp = PostIncrement
@@ -77,7 +79,7 @@ cArithOps = [("*", Mult), ("/", Div), ("%", Mod), ("+", Add), ("-", Minus),
              ("^", Xor), (">", CGT), ("<", CLT)]
 
 cPostfixOps = [("++", PostIncrement), ("--", PostDecrement)]
-cPrefixOps = [("++", PreIncrement), ("--", PreDecrement), ("!", PreNot), ("*", Dereference)]
+cPrefixOps = [("++", PreIncrement), ("--", PreDecrement), ("!", PreNot), ("*", Dereference), ("&", AddressOf)]
 
 readableOp :: BinaryOp -> String
 readableOp op =

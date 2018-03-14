@@ -2,11 +2,6 @@
 {-# LANGUAGE TupleSections #-}
 
 module Parser where
-    -- (
-    --     loadFile, fileParser,
-    --     CFile,
-    --     CElement, Var, Type, PreKind, VarKind
-    -- ) where
 
 import Control.Arrow
 import Control.Monad
@@ -172,7 +167,6 @@ statementParser = do
 varDefParser :: CharParser st CStatement
 varDefParser = do
     var <- varParser
-
     init <- optionMaybe initialization
 
     pure $ VarDef var init
@@ -186,9 +180,42 @@ varDefParser = do
 varParser :: CharParser st Var
 varParser = do
     varType <- typeParser
-    varName <- cIdentifier
+    (varKind, varName) <- varNameParser
 
-    return $ Var varType varName
+    arguments <- optionMaybe $ between (char '(') (char ')') $ sepBy (try varParser) (char ',')
+
+    case arguments of
+        Nothing -> pure $ Var varType varName
+        Just args ->
+            if varKind == Pointer then
+                let argTypes = map (\(Var varType _) -> varType) args in
+                    pure $ Var (FunctionPointer varType argTypes) varName
+            else
+                error "Cannot have arguments to a variable that is not a function pointer!"
+
+    where
+        innerParser = do
+            isPointer <- char '*'
+            name <- cIdentifier
+            pure (Just isPointer, name)
+
+        varEndParser = do
+            r <- cIdentifier <|> (:[]) <$> lookAhead (oneOf ";,)")
+
+            pure $ case r of
+                ";" -> ""
+                "," -> ""
+                ")" -> ""
+                _ -> r
+
+        varNameParser = do
+            (isPointer, name) <- try (between (char '(') (char ')') innerParser) <|>
+                                 (Nothing,) <$> varEndParser
+
+            pure $ case isPointer of
+                Nothing -> (Value, name)
+                Just '*' -> (Pointer, name)
+
 
 returnParser :: CharParser st CStatement
 returnParser = do
@@ -351,7 +378,7 @@ operatorTable =
     [
         [cBinary "->" (\a b -> MemberAccess (CPrefix Dereference a) b), cBinary "." MemberAccess],
         [arrayAccessOperator],
-        [prefix "++" PreIncrement, prefix "--" PreDecrement, prefix "*" Dereference, prefix "!" PreNot],
+        [prefix "++" PreIncrement, prefix "--" PreDecrement, prefix "*" Dereference, prefix "!" PreNot, prefix "&" AddressOf],
         [postfix "++" PostIncrement, postfix "--" PostDecrement],
         [binary "*" Mult, binary "/" Div, binary "%" Mod],
         [binary "+" Add, binary "-" Minus],

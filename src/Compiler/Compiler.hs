@@ -61,7 +61,13 @@ compileElement (FuncDef t funcName args statements) = do
             Nothing -> getRegsOfType "s"
             Just _ -> ("ra" :) <$> getRegsOfType "s"
 
-    pure $ Label label : saveStack saveRegs ++ [Empty] ++ body ++ [Empty, Label funcEnd] ++ restoreStack saveRegs ++ [Inst OP_JR "ra" "" ""]
+    pure $ Label label : saveStack saveRegs ++ [Empty] ++ body ++ [Empty, Label funcEnd] ++ restoreStack saveRegs ++ freeMemory ++ [Inst OP_JR "ra" "" ""]
+
+    where
+        freeMemory =
+            case funcName of
+                "main" -> [Inst OP_LI "v0" "10" "", Inst SYSCALL "" "" ""]
+                _ -> []
 
 compileElement _ = pure []
 
@@ -133,6 +139,13 @@ handleIfStatement st@(IfStatement cond branches body) = do
 -- Compile statements
 ----------------------------------
 compileStatement :: CStatement -> State Environment [MIPSInstruction]
+compileStatement st@(VarDef (Var FunctionPointer{} varName) ini) = do
+    reg <- useNextRegister "s" varName
+
+    case ini of
+        Just (VarRef name) -> pure [Inst OP_LA reg name ""]
+        Nothing -> pure [Empty, Comment (readable st)]
+
 compileStatement st@(VarDef (Var (Type varKind typeName) varName) ini) = do
     reg <- useNextRegister "s" varName
 
@@ -173,9 +186,11 @@ compileStatement st@(Return expr) = do
 
     (source, instr) <- compileExpressionTemp expr
 
-    Environment _ _ global _ <- get
+    fInfo <- getFuncLabel =<< getCurFunc
 
-    (_, funcEnd) <- getFuncLabel =<< getCurFunc
+    let funcEnd = case fInfo of
+                    Nothing -> error "Unknown current function"
+                    Just (_, endLabel) -> endLabel
 
     modify $ purgeRegTypeEnv "t"
     pure $ Empty : Comment (readable st) : instr ++ [Inst OP_MOVE "v0" source "", Inst OP_J funcEnd "" ""]
@@ -194,10 +209,10 @@ compileStatement st@(Assign assignKind lhs rhs) = do
                 case last instr of
                     Inst OP_LW target offset loadSource -> do
                         tempReg <- useNextRegister "t" "temp_load"
-                        pure (tempReg, init instr, assignOp tempReg target ++ [Inst OP_SW tempReg offset target])
+                        pure (tempReg, init instr, assignOp tempReg target ++ [Inst OP_SW tempReg offset loadSource])
                     Inst OP_LB target offset loadSource -> do
                         tempReg <- useNextRegister "t" "temp_load"
-                        pure (tempReg, init instr, assignOp tempReg target ++ [Inst OP_SB tempReg offset target])
+                        pure (tempReg, init instr, assignOp tempReg target ++ [Inst OP_SB tempReg offset loadSource])
                     inst -> error $ "Unexpected instruction for assign expression: " ++ show st ++ " " ++ show inst
             else
                 pure (reg, [], assignOp reg reg)
@@ -217,7 +232,16 @@ compileStatement CComment{} = pure []
 -- Compile Expression (using temp registers)
 ---------------------------------------------
 compileExpressionTemp :: CExpression -> State Environment (String, [MIPSInstruction])
-compileExpressionTemp (VarRef varName) = (,[]) <$> getRegister varName
+compileExpressionTemp (VarRef varName) = do
+    fInfo <- getFuncLabel varName
+
+    case fInfo of
+        Just (funcLabel, _) -> do
+            reg <- useNextRegister "t" $ varName ++ "_" ++ funcLabel
+
+            pure (reg, [Inst OP_LA reg funcLabel ""])
+
+        Nothing -> (,[]) <$> getRegister varName
 
 compileExpressionTemp (LitInt i) = do
     reg <- useNextRegister "t" $ show i
@@ -310,6 +334,9 @@ compileExpressionTemp (MemberAccess expr (VarRef name)) = do
 
 -- t0 is just a dummy register because we should never use the value that comes from calling printf.
 compileExpressionTemp (FuncCall "printf" args) = ("t0",) <$> compilePrintf args
+compileExpressionTemp (FuncCall "malloc" [arg]) = compileMalloc arg
+compileExpressionTemp (FuncCall "sizeof" [arg]) = compileSizeof arg
+-- compileExpressionTemp (FuncCall "free" [arg]) = compileFree arg -- TODO: Figure this out.
 
 compileExpressionTemp (FuncCall funcName args) = do
     env <- get
@@ -321,13 +348,31 @@ compileExpressionTemp (FuncCall funcName args) = do
 
     let argLoading = map (\(i, r) -> Inst OP_MOVE ("a" ++ show i) r "") $ zip [0..] regs
 
-    (funcLabel, _) <- getFuncLabel funcName
-    reg <- useNextRegister "t" "func_call_return_val"
+    res <- getFuncLabel funcName
+    retVal <- useNextRegister "t" "func_call_return_val"
 
-    pure (reg,
-             instr ++ argLoading ++
-                [Inst OP_JAL funcLabel "" "",
-                 Inst OP_MOVE reg "v0" ""]) -- Make sure to save func call result.
+    jumpOp <- case res of
+                    -- If we don't find it, see if we have a function pointer for it.
+                    Nothing -> do
+                        r <- getRegister funcName
+                        pure $ Inst OP_JALR r "" ""
+                    Just (label, _) -> pure $ Inst OP_JAL label "" ""
+    pure (retVal,
+             instr ++ argLoading ++ [jumpOp] ++
+             [Inst OP_MOVE retVal "v0" ""]) -- Make sure to save func call result.
+
+compileSizeof :: CExpression -> State Environment (String, [MIPSInstruction])
+compileSizeof expr = do
+    t <- resolveType expr >>= elaborateType
+    reg <- useNextRegister "t" $ "sizeof(" ++ show expr ++ ")"
+
+    pure (reg, [Inst OP_LI reg (show (sizeof t)) ""])
+
+compileMalloc :: CExpression -> State Environment (String, [MIPSInstruction])
+compileMalloc expr = do
+    (reg, instr) <- compileExpressionTemp expr
+
+    pure ("v0", instr ++ [Inst OP_LI "v0" "9" "", Inst OP_MOVE "a0" reg "", Inst SYSCALL "" "" ""])
 
 compilePrintf :: [CExpression] -> State Environment [MIPSInstruction]
 compilePrintf (LitString formatStr:args) = do
@@ -338,6 +383,8 @@ compilePrintf (LitString formatStr:args) = do
     pure instr
 
     where
+        go x "" = pure x
+
         go (a:as, curInstr) "%s" = do
             (reg, instr) <- compileExpressionTemp a
             t <- resolveType a >>= elaborateType
