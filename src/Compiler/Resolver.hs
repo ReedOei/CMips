@@ -2,11 +2,14 @@ module Compiler.Resolver where
 
 import Control.Monad.State
 
-import Data.List (find)
+import Data.List (find, maximumBy)
 import Data.Maybe (fromMaybe)
+import Data.Ord (comparing)
 
 import CLanguage
 import Compiler.Types
+
+import System.IO.Unsafe
 
 sizeof :: Type -> Int
 sizeof (NamedType "char") = 1
@@ -15,7 +18,8 @@ sizeof (NamedType "short") = 2
 sizeof (NamedType "long long int") = 8
 sizeof (NamedType "double") = 8
 sizeof (NamedType _) = 4
-sizeof (Type Pointer _) = 4
+sizeof (Type Pointer _) = 4 -- 32 bit pointers.
+sizeof (Type Value t) = sizeof t
 sizeof _ = 4
 
 findTypesElement :: CElement -> [Var]
@@ -50,14 +54,17 @@ getStructOffset :: CExpression -> String -> State Environment Int
 getStructOffset expr member = do
     StructType (StructDef _ members) <- resolveType expr >>= elaborateType
 
+    types <- mapM (\(Var varType _) -> elaborateType varType) members
+    let maxSize = maximum $ map sizeof types
+
     let varTypes = map (\(Var varType _) -> varType) $ takeWhile (\(Var _ name) -> name /= member) members
     foldM (\n t -> do
                 newT <- elaborateType t
-                pure $ n + sizeof newT) 0 varTypes
+                pure $ n + max maxSize (sizeof newT)) 0 varTypes
 
 resolveFuncCall :: String -> State Environment CElement
 resolveFuncCall funcName = do
-    Environment (CFile _ elements) _ _ <- get
+    Environment (CFile _ elements) _ _ _ <- get
 
     case findFuncCall funcName elements of
         Nothing -> error $ "Unresolved reference to function: " ++ funcName
@@ -65,7 +72,7 @@ resolveFuncCall funcName = do
 
 elaborateType :: Type -> State Environment Type
 elaborateType (NamedType structName) = do
-    Environment (CFile _ elements) _ _ <- get
+    Environment (CFile _ elements) _ _ _ <- get
     case findStructDef structName elements of
         Nothing -> pure $ NamedType structName
         Just struct -> pure $ StructType struct
@@ -74,7 +81,7 @@ elaborateType t = pure t
 
 resolve :: String -> State Environment Var
 resolve refName = do
-    Environment (CFile _ elements) _ _ <- get
+    Environment (CFile _ elements) _ _ _ <- get
     pure $ fromMaybe (error ("Unknown reference to: " ++ refName)) $
                 find (\(Var _ varName) -> varName == refName) $ concatMap findTypesElement elements
 

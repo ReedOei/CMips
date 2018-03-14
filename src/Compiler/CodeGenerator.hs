@@ -10,7 +10,19 @@ printCode :: MIPSFile -> IO ()
 printCode = putStrLn . generateFile
 
 generateFile :: MIPSFile -> String
-generateFile (MIPSFile _ instructions) = intercalate "\n\n" $ map generate instructions
+generateFile (MIPSFile _ sections instructions) =
+    intercalate "\n\n" (map generateSection sections) ++
+    intercalate "\n\n" (map generate instructions)
+
+generateSection :: MIPSSection -> String
+generateSection (MIPSSection "text" _) = ".text"
+generateSection (MIPSSection _ []) = ""
+generateSection (MIPSSection name d) =
+    "." ++ name ++ "\n" ++
+    intercalate "\n" (map generateData d)
+
+generateData :: (String, String, String) -> String
+generateData (name, dataType, dataVal) = name ++ ": " ++ "." ++ dataType ++ " " ++ dataVal
 
 generate :: [MIPSInstruction] -> String
 generate [] = ""
@@ -30,8 +42,10 @@ generateInstruction (Label labelName) = labelName ++ ":"
 generateInstruction (Comment comment) = "# " ++ comment
 generateInstruction (Inst funct rd rs rt) =
     case funct of
+        SYSCALL -> "syscall"
         OP_MOVE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs
         OP_LI -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs
+        OP_LA -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs
         OP_LW -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
         OP_LB -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
         OP_SW -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"

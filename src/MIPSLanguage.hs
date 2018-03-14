@@ -2,7 +2,10 @@ module MIPSLanguage where
 
 import CLanguage
 
-data MIPSFile = MIPSFile String [[MIPSInstruction]] -- Each list contains one function def.
+data MIPSFile = MIPSFile String [MIPSSection] [[MIPSInstruction]] -- Each list contains one function def.
+    deriving Show
+
+data MIPSSection = MIPSSection String [(String, String, String)]
     deriving Show
 
 data MIPSInstruction = Inst MIPSOp String String String
@@ -14,6 +17,7 @@ data MIPSInstruction = Inst MIPSOp String String String
 data MIPSOp = OP_ADD
             | OP_MOVE
             | OP_LI
+            | OP_LA
             | OP_MUL
             | OP_LW
             | OP_SW
@@ -37,12 +41,14 @@ data MIPSOp = OP_ADD
             | OP_SRL
             | OP_REM
             | OP_NOT
+            | SYSCALL
     deriving (Show, Eq)
 
 mnemonic :: MIPSOp -> String
 mnemonic OP_MOVE = "move"
 mnemonic OP_REM = "rem"
 mnemonic OP_LI = "li"
+mnemonic OP_LA = "la"
 mnemonic OP_ADD = "add"
 mnemonic OP_MUL = "mul"
 mnemonic OP_SUB = "sub"
@@ -66,6 +72,7 @@ mnemonic OP_JAL = "jal"
 mnemonic OP_SLL = "sll"
 mnemonic OP_SRL = "srl"
 mnemonic OP_NOT = "not"
+mnemonic SYSCALL = "syscall"
 
 opFind :: BinaryOp -> MIPSOp
 opFind Add = OP_ADD

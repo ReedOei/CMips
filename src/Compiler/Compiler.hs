@@ -6,7 +6,8 @@ import Control.Monad
 import Control.Monad.State
 
 import Data.Char (ord)
-import Data.List (isPrefixOf, find)
+import Data.List (isPrefixOf, find, intersperse)
+import Data.List.Split (splitOn)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
@@ -19,9 +20,10 @@ import MIPSLanguage
 import System.IO.Unsafe
 
 compile :: CFile -> MIPSFile
-compile file@(CFile fname elements) = MIPSFile fname instructions
+compile file@(CFile fname elements) = MIPSFile fname sections instructions
     where
-        (instructions, finalEnv) = runState state $ newEnvironment file
+        sections = [generateDataSection "data" d, generateDataSection "kdata" kd, MIPSSection "text" []]
+        (instructions, Environment _ (Data d kd) _ _) = runState state $ newEnvironment file
         state = foldM go [] elements
         go prev element = do
             newInstructions <- compileElement element
@@ -29,6 +31,10 @@ compile file@(CFile fname elements) = MIPSFile fname instructions
             modify $ purgeRegTypesEnv ["s", "t"]
 
             return $ prev ++ [newInstructions]
+
+generateDataSection :: String -> [DataElement] -> MIPSSection
+generateDataSection sectionName elements =
+    MIPSSection sectionName $ map (\(DataElement name dataType value) -> (name, dataType, value)) elements
 
 saveStack :: [String] -> [MIPSInstruction]
 saveStack registers = Inst OP_SUB "sp" "sp" (show (4 * length registers)) : saveInstr
@@ -167,7 +173,7 @@ compileStatement st@(Return expr) = do
 
     (source, instr) <- compileExpressionTemp expr
 
-    Environment _ global _ <- get
+    Environment _ _ global _ <- get
 
     (_, funcEnd) <- getFuncLabel =<< getCurFunc
 
@@ -176,8 +182,6 @@ compileStatement st@(Return expr) = do
 
 compileStatement st@(Assign assignKind lhs rhs) = do
     (source, instr) <- compileExpressionTemp rhs
-
-    Environment file global local <- get
 
     (reg, accessInstr, postAccessInstr) <- do
             let assignOp x r = case assignKind of
@@ -223,6 +227,11 @@ compileExpressionTemp (LitChar c) = do
     reg <- useNextRegister "t" $ show $ ord c
     pure (reg, [Inst OP_LI reg (show (ord c)) ""])
 
+compileExpressionTemp (LitString s) = do
+    name <- saveStr s
+    reg <- useNextRegister "t" name
+    pure (reg, [Inst OP_LA reg name ""])
+
 compileExpressionTemp NULL =  pure ("0", [])
 
 compileExpressionTemp (CArrayAccess accessExpr expr) = do
@@ -233,7 +242,7 @@ compileExpressionTemp (CArrayAccess accessExpr expr) = do
     varType <- resolveType $ CPrefix Dereference accessExpr
 
     case sizeof varType of
-        1 -> pure (dest, instr ++ accessInstr ++ [Inst OP_ADD dest dest access, -- Calculate address to load.
+        1 -> pure (dest, instr ++ accessInstr ++ [Inst OP_ADD dest source access, -- Calculate address to load.
                                                   Inst OP_LB dest "0" dest]) -- Load memory, using lb instead of lw.
         size -> pure (dest, instr ++ accessInstr ++ [Inst OP_MUL dest source $ show $ sizeof varType,
                                                      Inst OP_ADD dest dest access, -- Calculate address to load.
@@ -299,6 +308,9 @@ compileExpressionTemp (MemberAccess expr (VarRef name)) = do
         Inst OP_LW a _ b -> pure (source, init instr ++ [Inst OP_LW a (show n) b])
         _ -> pure (source, instr ++ [Inst OP_LW source (show n) source])
 
+-- t0 is just a dummy register because we should never use the value that comes from calling printf.
+compileExpressionTemp (FuncCall "printf" args) = ("t0",) <$> compilePrintf args
+
 compileExpressionTemp (FuncCall funcName args) = do
     env <- get
     let go (curRegs, curInstr) expr = do
@@ -316,4 +328,30 @@ compileExpressionTemp (FuncCall funcName args) = do
              instr ++ argLoading ++
                 [Inst OP_JAL funcLabel "" "",
                  Inst OP_MOVE reg "v0" ""]) -- Make sure to save func call result.
+
+compilePrintf :: [CExpression] -> State Environment [MIPSInstruction]
+compilePrintf (LitString formatStr:args) = do
+    -- Split up the format string and find the things we need to insert (only strings and integers for now).
+    let elements = concatMap (intersperse "%d" . splitOn "%d") $ intersperse "%s" $ splitOn "%s" formatStr
+
+    (_, instr) <- foldM go (args, []) elements
+    pure instr
+
+    where
+        go (a:as, curInstr) "%s" = do
+            (reg, instr) <- compileExpressionTemp a
+            t <- resolveType a >>= elaborateType
+            case t of
+                Type Pointer (NamedType "char") ->
+                    pure (as, curInstr ++ instr ++ [Inst OP_MOVE "a0" reg "", Inst OP_LI "v0" "4" "", Inst SYSCALL "" "" ""]) -- 4 is print string
+                _ -> error $ "Type is not char*, cannot print: '" ++ show t ++ "'"
+
+        go (a:as, curInstr) "%d" = do
+            (reg, instr) <- compileExpressionTemp a
+            pure (as, curInstr ++ instr ++ [Inst OP_MOVE "a0" reg "", Inst OP_LI "v0" "1" "", Inst SYSCALL "" "" ""]) -- 1 is print int.
+
+        go (as, curInstr) str = do
+            name <- saveStr str
+            reg <- useNextRegister "t" name
+            pure (as, curInstr ++ [Inst OP_LA "a0" name "", Inst OP_LI "v0" "4" "", Inst SYSCALL "" "" ""]) -- 4 is print string
 

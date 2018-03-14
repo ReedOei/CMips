@@ -304,6 +304,7 @@ expressionParser =
                    try (VarRef <$> cIdentifier) <|>
                    try funcCallParser <|>
                    try charParser <|>
+                   try stringParser <|>
                    LitInt <$> readNum
 
 nullParser :: CharParser st CExpression
@@ -319,6 +320,9 @@ charParser = do
 
     pure $ LitChar c
 
+stringParser :: CharParser st CExpression
+stringParser = LitString <$> between (char '"') (char '"') (many $ noneOf "\"")
+
 arrayAccessOperator = Postfix parser
     where parser = try $ do
                 exprs <- many1 (between (char '[') (char ']') expressionParser)
@@ -332,6 +336,7 @@ operandParser =
                 try nullParser <|>
                 try (VarRef <$> cIdentifier) <|>
                 try charParser <|>
+                try stringParser <|>
                 LitInt <$> readNum
 
 funcCallParser :: CharParser st CExpression

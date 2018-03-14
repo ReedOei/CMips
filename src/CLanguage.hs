@@ -58,6 +58,7 @@ data CExpression = VarRef String
                  | MemberAccess CExpression CExpression
                  | LitInt Int
                  | LitChar Char
+                 | LitString String
                  | NULL
                  | FuncCall String [CExpression]
                  | CPrefix PrefixOp CExpression
@@ -118,6 +119,7 @@ readable (Assign op accessExpr expr) = readableExpr accessExpr ++ " " ++ maybeOp
 
 readableExpr :: CExpression -> String
 readableExpr (LitInt n) = show n
+readableExpr (LitString s) = show s
 readableExpr (LitChar c) = show c
 readableExpr NULL = "NULL"
 readableExpr (VarRef x) = x
