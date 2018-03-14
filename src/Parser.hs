@@ -15,7 +15,7 @@ import Text.Parsec.Expr
 import System.IO.Unsafe
 
 import CLanguage
-import Util (findSplit, maybePred)
+import ParserUtil
 
 loadFile :: String -> IO CFile
 loadFile filename = do
@@ -293,15 +293,6 @@ forStatementParser = do
 
             pure (ini, cond, step)
 
-wsSkip :: CharParser st ()
-wsSkip = do
-    _ <- many (oneOf " \t")
-
-    pure ()
-
-newlines :: CharParser st ()
-newlines = many1 (wsSkip >> char '\n' >> wsSkip) >> pure ()
-
 block :: CharParser st [CStatement]
 block = do
     wsSkip
@@ -314,15 +305,6 @@ block = do
             statements <- sepEndBy statementParser newlines
             optional newlines
             pure statements
-
-readNum :: Num a => CharParser st a
-readNum = do
-    isNegative <- optionMaybe $ char '-'
-    digits <- many1 digit
-
-    let sign = maybe 1 (const (-1)) isNegative
-
-    pure $ sign * fromInteger (read digits)
 
 expressionParser :: CharParser st CExpression
 expressionParser =

@@ -10,6 +10,7 @@ import Text.ParserCombinators.Parsec
 import Compiler.Compiler
 import Compiler.CodeGenerator
 import Parser
+import LispParser
 
 options :: [OptDescr String]
 options = [Option ['o'] ["output"] (ReqArg id "FILE") "output file"]

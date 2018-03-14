@@ -26,6 +26,7 @@ dependencies:
 - containers
 - mtl
 - split
+- MissingH
 
 library:
   source-dirs: src
