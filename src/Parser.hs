@@ -11,9 +11,11 @@ module Parser where
 import Control.Arrow
 import Control.Monad
 
+import Data.List (tails)
 import Data.Maybe (isJust, maybe)
 
 import Text.ParserCombinators.Parsec
+import Text.Parsec.Expr
 
 import System.IO.Unsafe
 
@@ -33,7 +35,6 @@ fileParser filename = CFile filename <$> cElementList
 
 cElementList :: CharParser st [CElement]
 cElementList = filter (/= MiscElement) <$> sepEndBy cElement (many1 (char '\n'))
--- cElementList = sepEndBy cElement (char '\n')
 
 cElement :: CharParser st CElement
 cElement = try preprocessorParser <|>
@@ -102,7 +103,10 @@ structParser = do
 
     char ';' -- block ends with }, but structs end with };
 
-    pure $ StructDef name $ map (\(VarDef var _) -> var) varDefs
+    pure $ StructDef name $ concatMap go varDefs
+    where
+        go (VarDef var _) = [var]
+        go _ = []
 
 functionParser :: CharParser st CElement
 functionParser = do
@@ -138,11 +142,13 @@ typeParser = do
     varKindStr <- optionMaybe $ many $ char '*'
     wsSkip
 
-    let varKind = case varKindStr of
-                      Just ('*':_) -> Pointer
-                      _ -> Value
+    pure $ case varKindStr of
+              Just pointers@('*':_) -> foldl go (NamedType typeName) pointers
+              _ -> Type Value $ NamedType typeName
 
-    return $ Type varKind $ NamedType typeName
+    where
+        go t '*' = Type Pointer t
+
 
 statementParser :: CharParser st CStatement
 statementParser = do
@@ -158,7 +164,7 @@ statementParser = do
 
     wsSkip
     -- Get semicolon at the end of the line.
-    optional (char ';')
+    optional $ char ';'
     optional commentParser
 
     pure val
@@ -193,7 +199,7 @@ returnParser = do
 
 assignParser :: CharParser st CStatement
 assignParser = do
-    lhs <- try expressionParser
+    lhs <- expressionParser
     wsSkip
     assignOp <- optionMaybe $ choice $ map (try . string . fst) cArithOps
     char '='
@@ -293,37 +299,12 @@ readNum = do
 
 expressionParser :: CharParser st CExpression
 expressionParser =
-                   try postfixParser <|>
                    try cArithParser <|>
-                   try prefixParser <|>
-                   try memberAccessParser <|>
                    try nullParser <|>
                    try (VarRef <$> cIdentifier) <|>
-                   try arrayAccessParser <|>
                    try funcCallParser <|>
                    try charParser <|>
                    LitInt <$> readNum
-
-accessOperandParser :: CharParser st CExpression
-accessOperandParser = try (between (char '(') (char ')') (try expressionParser <|> try prefixParser <|> try postfixParser)) <|>
-                      try arrayAccessParser <|>
-                      try funcCallParser <|>
-                      try nullParser <|>
-                      try (VarRef <$> cIdentifier) <|>
-                      try charParser <|>
-                      LitInt <$> readNum
-
-memberAccessParser :: CharParser st CExpression
-memberAccessParser = do
-    wsSkip
-    a <- accessOperandParser
-    accessOpStr <- string "." <|> string "->"
-    b <- try memberAccessParser <|>
-         try (VarRef <$> cIdentifier)
-
-    case accessOpStr of
-        "." -> pure $ MemberAccess a b
-        "->" -> pure $ MemberAccess (CPrefix Dereference a) b
 
 nullParser :: CharParser st CExpression
 nullParser = string "NULL" >> pure NULL
@@ -338,19 +319,15 @@ charParser = do
 
     pure $ LitChar c
 
-arrayAccessParser :: CharParser st CExpression
-arrayAccessParser = do
-    name <- cIdentifier
-    expr <- between (char '[') (char ']') expressionParser
+arrayAccessOperator = Postfix parser
+    where parser = try $ do
+                exprs <- many1 (between (char '[') (char ']') expressionParser)
 
-    pure $ CArrayAccess name expr
+                pure $ \accessExpr -> foldl CArrayAccess accessExpr exprs
 
 operandParser :: CharParser st CExpression
-operandParser = try memberAccessParser <|>
-                try prefixParser <|>
-                try postfixParser <|>
+operandParser =
                 try (between (char '(') (char ')') (try expressionParser)) <|>
-                try arrayAccessParser <|>
                 try funcCallParser <|>
                 try nullParser <|>
                 try (VarRef <$> cIdentifier) <|>
@@ -365,92 +342,31 @@ funcCallParser = do
 
     pure $ FuncCall funcName arguments
 
-prefixOperandParser :: CharParser st CExpression
-prefixOperandParser = try memberAccessParser <|>
-                      try postfixParser <|>
-                      try (between (char '(') (char ')') (try expressionParser)) <|>
-                      try arrayAccessParser <|>
-                      try funcCallParser <|>
-                      try nullParser <|>
-                      try (VarRef <$> cIdentifier) <|>
-                      try charParser <|>
-                      LitInt <$> readNum
+operatorTable =
+    [
+        [cBinary "->" (\a b -> MemberAccess (CPrefix Dereference a) b), cBinary "." MemberAccess],
+        [arrayAccessOperator],
+        [prefix "++" PreIncrement, prefix "--" PreDecrement, prefix "*" Dereference, prefix "!" PreNot],
+        [postfix "++" PostIncrement, postfix "--" PostDecrement],
+        [binary "*" Mult, binary "/" Div, binary "%" Mod],
+        [binary "+" Add, binary "-" Minus],
+        [binary ">=" CGTE, binary "<=" CLTE, binary ">" CGT, binary "<" CLT, binary "==" CEQ, binary "!=" CNE],
+        [binary "^" Xor, binary "<<" ShiftLeft, binary ">>" ShiftRight, binary "&" AndBit, binary "|" OrBit],
+        [binary "&&" And, binary "||" Or]
+    ]
 
-prefixParser :: CharParser st CExpression
-prefixParser = do
-    op <- choice $ map (try . string . fst) cPrefixOps
+opParser :: String -> (a -> b) -> CharParser st (a -> b)
+opParser name fun = try $ do
     wsSkip
-    var <- prefixOperandParser
-
-    case lookup op cPrefixOps of
-        Nothing -> fail $ "Unknown prefix operation: " ++ op
-        Just prefixOp -> pure $ CPrefix prefixOp var
-
-postfixOperandParser :: CharParser st CExpression
-postfixOperandParser = try memberAccessParser <|>
-                       try prefixParser <|>
-                       try (between (char '(') (char ')') (try expressionParser)) <|>
-                       try arrayAccessParser <|>
-                       try funcCallParser <|>
-                       try nullParser <|>
-                       try (VarRef <$> cIdentifier) <|>
-                       try charParser <|>
-                       LitInt <$> readNum
-
-
-postfixParser :: CharParser st CExpression
-postfixParser = do
-    var <- postfixOperandParser
+    string name
     wsSkip
-    op <- choice $ map (try . string . fst) cPostfixOps
+    pure fun
 
-    case lookup op cPostfixOps of
-        Nothing -> fail $ "Unknown postfix operation: " ++ op
-        Just postfixOp -> pure $ CPostfix postfixOp var
-
-cArithBinary = map (second CBinaryOp) cArithOps
-
-extractExprOp :: (CExpression, Maybe String) -> Maybe (CExpression, CExpression -> CExpression -> CExpression)
-extractExprOp (expr, op) = (expr,) <$> (op >>= (`lookup` cArithBinary))
-
-resolve :: [String] -> [(CExpression, Maybe String)] -> Maybe (CExpression, Maybe String)
-resolve _ [] = Nothing
-resolve _ [x] = Just x
-resolve [] _ = Nothing
-resolve (op:ops) arith =
-    -- Split the arithmetic expression with the highest precedence operator.
-    case findSplit (maybePred (== op) . snd) arith of
-        Nothing -> resolve ops arith
-        Just (left, (cur,_), right) ->
-            let l = extractExprOp =<< resolve (op:ops) left
-                r = resolve (op:ops) right in
-                case lookup op cArithBinary of
-                    Nothing -> Nothing
-                    Just f -> let (new, lastOp) = maybe (cur, Nothing) (first (cur `f`)) r in
-                                  maybe (Just (new, lastOp)) (\(expr, lf) -> Just (expr `lf` new, lastOp)) l
+cBinary name fun = Infix (opParser name fun) AssocLeft
+binary name fun = Infix (opParser name (CBinaryOp fun)) AssocLeft
+prefix name fun = Prefix (opParser name (CPrefix fun))
+postfix name fun = Postfix (opParser name (CPostfix fun))
 
 cArithParser :: CharParser st CExpression
-cArithParser = do
-    arith <- opParser
-
-    case resolve (map fst cArithBinary) arith of
-        Just (expr, Nothing) -> pure expr
-        _ -> error $ "Could not resolve '" ++ show arith ++ "' into an expression."
-
-opParser :: CharParser st [(CExpression, Maybe String)]
-opParser = do
-    a <- operandParser
-
-    wsSkip
-    nextOp <- optionMaybe $ choice $ map (try . string . fst) cArithBinary
-    wsSkip
-
-    case nextOp of
-        Nothing -> pure [(a, Nothing)]
-        Just op -> do
-            rest <- optionMaybe opParser
-
-            case rest of
-                Nothing -> pure [(a,Just op)]
-                Just vs -> pure $ (a,Just op):vs
+cArithParser = buildExpressionParser operatorTable operandParser
 

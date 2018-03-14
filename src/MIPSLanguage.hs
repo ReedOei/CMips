@@ -17,6 +17,8 @@ data MIPSOp = OP_ADD
             | OP_MUL
             | OP_LW
             | OP_SW
+            | OP_LB
+            | OP_SB
             | OP_XOR
             | OP_DIV
             | OP_SUB
@@ -46,6 +48,8 @@ mnemonic OP_MUL = "mul"
 mnemonic OP_SUB = "sub"
 mnemonic OP_LW = "lw"
 mnemonic OP_SW = "sw"
+mnemonic OP_LB = "lb"
+mnemonic OP_SB = "sb"
 mnemonic OP_OR = "or"
 mnemonic OP_AND = "and"
 mnemonic OP_XOR = "xor"
@@ -77,6 +81,7 @@ opFind Mod = OP_REM
 opFind And = OP_AND
 opFind Or = OP_OR
 opFind CNE = OP_SUB -- If they are the same, we will get 0, which is false.
+opFind op = error $ "Unknown operation: '" ++ show op ++ "'"
 
 getBranchOpNeg :: BinaryOp -> MIPSOp
 getBranchOpNeg CEQ = OP_BNE

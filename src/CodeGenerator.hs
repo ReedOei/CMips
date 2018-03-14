@@ -33,7 +33,9 @@ generateInstruction (Inst funct rd rs rt) =
         OP_MOVE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs
         OP_LI -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs
         OP_LW -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
+        OP_LB -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
         OP_SW -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
+        OP_SB -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
         OP_J -> mnemonic funct ++ " " ++ rd
         OP_JR -> mnemonic funct ++ " $" ++ rd
         OP_JAL -> mnemonic funct ++ " " ++ rd

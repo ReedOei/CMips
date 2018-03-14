@@ -27,6 +27,9 @@ newtype Local = Local (Map String String) -- Map of registers to variable names.
     deriving Show
 
 sizeof :: Type -> Int
+sizeof (NamedType "char") = 1
+sizeof (NamedType "short") = 2
+sizeof (NamedType "long long int") = 8
 sizeof (NamedType "double") = 8
 sizeof (NamedType _) = 4
 sizeof (Type Pointer _) = 4
@@ -106,7 +109,7 @@ resolveType (CPrefix Dereference expr) = do
         _ -> error $ "Cannot dereference non-pointer type: " ++ show t
 resolveType (CPrefix _ expr) = resolveType expr
 
-resolveType (CArrayAccess name expr) = resolveType $ CPrefix Dereference (VarRef name)
+resolveType (CArrayAccess accessExpr _) = resolveType $ CPrefix Dereference accessExpr
 resolveType (CPostfix _ expr) = resolveType expr
 resolveType (FuncCall funcName _) = do
     FuncDef t _ _ _ <- resolveFuncCall funcName
@@ -398,6 +401,8 @@ compileStatement st@(ExprStatement expr) = do
     modify $ purgeRegTypeEnv "t"
     pure $ Empty : Comment (readable st) : instr
 
+compileStatement CComment{} = pure []
+
 ---------------------------------------------
 -- Compile Expression (using temp registers)
 ---------------------------------------------
@@ -414,16 +419,16 @@ compileExpressionTemp (LitChar c) = do
 
 compileExpressionTemp NULL =  pure ("0", [])
 
-compileExpressionTemp (CArrayAccess varName expr) = do
+compileExpressionTemp (CArrayAccess accessExpr expr) = do
     (source, instr) <- compileExpressionTemp expr
+    (access, accessInstr) <- compileExpressionTemp accessExpr
 
-    dest <- useNextRegister "t" $ varName ++ "_access"
-    Var varType _ <- resolve varName
+    dest <- useNextRegister "t" $ readableExpr accessExpr ++ "_access"
+    varType <- resolveType accessExpr
 
-    reg <- getRegister varName
     pure (dest,
-             instr ++ [Inst OP_MUL dest source $ show $ sizeof varType,
-                       Inst OP_ADD dest dest reg, -- Calculate address to load.
+             instr ++ accessInstr ++ [Inst OP_MUL dest source $ show $ sizeof varType,
+                       Inst OP_ADD dest dest access, -- Calculate address to load.
                        Inst OP_LW dest "0" dest]) -- Load memory
 
 compileExpressionTemp (CBinaryOp op a b) = do

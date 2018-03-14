@@ -62,16 +62,16 @@ data CExpression = VarRef String
                  | FuncCall String [CExpression]
                  | CPrefix PrefixOp CExpression
                  | CPostfix PostfixOp CExpression
-                 | CArrayAccess String CExpression
+                 | CArrayAccess CExpression CExpression
                  | CBinaryOp BinaryOp CExpression CExpression
     deriving (Show, Eq)
 
 data CFile = CFile String [CElement]
     deriving Show
 
-cArithOps = [("*", Mult), ("/", Div), ("+", Add), ("-", Minus),
+cArithOps = [("*", Mult), ("/", Div), ("%", Mod), ("+", Add), ("-", Minus),
+             ("||", Or), ("&&", And),
              (">=", CGTE), ("<=", CLTE), ("!=", CNE), ("==", CEQ),
-             ("/", Div), ("%", Mod), ("||", Or), ("&&", And),
              ("|", OrBit), ("&", AndBit), ("<<", ShiftLeft), (">>", ShiftRight),
              ("^", Xor), (">", CGT), ("<", CLT)]
 
@@ -126,6 +126,6 @@ readableExpr (FuncCall funcName args) = funcName ++ "(" ++ intercalate ", " (map
 readableExpr (CPrefix Dereference expr) = "(" ++ readablePrefix Dereference ++ readableExpr expr ++ ")"
 readableExpr (CPrefix op expr) = readablePrefix op ++ readableExpr expr
 readableExpr (CPostfix op expr) = readableExpr expr ++ readablePostfix op
-readableExpr (CArrayAccess varName expr) = varName ++ "[" ++ readableExpr expr ++ "]"
+readableExpr (CArrayAccess accessExpr expr) = readableExpr accessExpr ++ "[" ++ readableExpr expr ++ "]"
 readableExpr (MemberAccess a b) = readableExpr a ++ "." ++ readableExpr b
 
