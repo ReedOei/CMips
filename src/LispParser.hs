@@ -9,10 +9,21 @@ import System.IO
 
 import Text.ParserCombinators.Parsec
 
+import Parser
 import LispLanguage
 import ParserUtil
 
-minilispFile = MinilispFile <$> endBy expr whitespace
+loadLispFile :: String -> IO MinilispFile
+loadLispFile filename = do
+    stdLib <- loadFile "lib/std.c"
+
+    contents <- filter (/= '\r') <$> readFile filename
+
+    case parse (minilispFile stdLib) "Error: " contents of
+      Left err -> error $ show err
+      Right file -> pure file
+
+minilispFile stdLib = MinilispFile stdLib <$> sepEndBy expr whitespace
 
 expr :: CharParser st Expr
 expr = comment <|> val <|> evalFunc <|> listParser
@@ -25,7 +36,7 @@ comment = do
 
 val :: CharParser st Expr
 val = Quoted <$> quotedVal <|>
-      try (IntVal <$> int) <|>
+      try (IntVal <$> readNum) <|>
       try (FloatVal <$> float) <|>
       Identifier <$> identifier
 
@@ -93,15 +104,4 @@ evalFunc = do
 
     where
         getArgs = map (\(Identifier n) -> n)
-
-parseFile = parse minilispFile "Error: "
-
-handleWhitespace s = until (\x -> not ("  " `isInfixOf` x)) (replace "  " " ") base
-    where base = replace "( " "(" $ replace "\t" " " $ replace "\r" " " $ replace "\n" " " s
-
-doParse inS =
-    case parseFile $ handleWhitespace s of
-        Left err -> error $ show err
-        Right (MinilispFile exprs) -> MinilispFile $ filter (/= Comment) exprs
-    where s = unlines $ filter (not . (";" `isPrefixOf`)) $ lines inS
 

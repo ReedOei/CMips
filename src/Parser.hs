@@ -69,7 +69,7 @@ preprocessorParser = do
     let preKind = case preKindStr of
                     "include" -> Include
                     "ifndef" -> IfNDef
-                    "define" -> Define
+                    "define" -> CDefine
                     "endif" -> EndIf
                     _ -> MiscPreKind
 

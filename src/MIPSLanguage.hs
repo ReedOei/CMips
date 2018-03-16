@@ -100,7 +100,23 @@ getBranchOpNeg CGT = OP_BLE
 getBranchOpNeg CGTE = OP_BLT
 getBranchOpNeg CNE = OP_BEQ
 
+getBranchOp :: BinaryOp -> MIPSOp
+getBranchOp CEQ = OP_BEQ
+getBranchOp CLTE = OP_BLE
+getBranchOp CLT = OP_BLT
+getBranchOp CGT = OP_BGT
+getBranchOp CGTE = OP_BGE
+getBranchOp CNE = OP_BNE
+
 isJAL (Inst OP_JAL _ _ _) = True
 isJAL (Inst OP_JALR _ _ _) = True
 isJAL _ = False
+
+hasOperand :: (String -> Bool) -> MIPSInstruction -> Bool
+hasOperand f (Inst _ a b c) = f a || f b || f c
+hasOperand _ _ = False
+
+getOperands :: MIPSInstruction -> [String]
+getOperands (Inst _ a b c) = [a,b,c]
+getOperands _ = []
 

@@ -2,10 +2,12 @@ module LispLanguage where
 
 import Data.List (intercalate)
 
-data MinilispFile = MinilispFile [Expr]
+import CLanguage
+
+data MinilispFile = MinilispFile CFile [Expr]
     deriving Show
 
-data Expr = IntVal Integer |
+data Expr = IntVal Int |
             FloatVal Float |
             Identifier String |
             Quoted String |

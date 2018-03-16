@@ -6,11 +6,11 @@ import Control.Monad
 import Control.Monad.State
 
 import Data.Char (ord)
-import Data.List (isPrefixOf, find, intersperse)
+import Data.List (isPrefixOf, find, findIndex, intersperse, (\\))
 import Data.List.Split (splitOn)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 
 import Compiler.Resolver
 import Compiler.Types
@@ -27,8 +27,8 @@ compile file@(CFile fname elements) = MIPSFile fname sections instructions
         state = foldM go [] elements
         go prev element = do
             newInstructions <- compileElement element
-
-            modify $ purgeRegTypesEnv ["s", "t"]
+            modify $ purgeRegTypesEnv ["s", "t", "result_stack"]
+            modify resetStack
 
             return $ prev ++ [newInstructions]
 
@@ -36,13 +36,13 @@ generateDataSection :: String -> [DataElement] -> MIPSSection
 generateDataSection sectionName elements =
     MIPSSection sectionName $ map (\(DataElement name dataType value) -> (name, dataType, value)) elements
 
-saveStack :: [String] -> [MIPSInstruction]
-saveStack registers = Inst OP_SUB "sp" "sp" (show (4 * length registers)) : saveInstr
-    where saveInstr = map (\(i, r) -> Inst OP_SW r (show (i * 4)) "sp") $ zip [0..] registers
+saveStack :: Int -> [String] -> [MIPSInstruction]
+saveStack reserved registers = Inst OP_SUB "sp" "sp" (show (reserved + 4 * length registers)) : saveInstr
+    where saveInstr = map (\(i, r) -> Inst OP_SW r (show (reserved + i * 4)) "sp") $ zip [0..] registers
 
-restoreStack :: [String] -> [MIPSInstruction]
-restoreStack registers = restoreInstr ++ [Inst OP_ADD "sp" "sp" (show (4 * length registers))]
-    where restoreInstr = map (\(i, r) -> Inst OP_LW r (show (i * 4)) "sp") $ zip [0..] registers
+restoreStack :: Int -> [String] -> [MIPSInstruction]
+restoreStack reserved registers = restoreInstr ++ [Inst OP_ADD "sp" "sp" (show (reserved + 4 * length registers))]
+    where restoreInstr = map (\(i, r) -> Inst OP_LW r (show (reserved + i * 4)) "sp") $ zip [0..] registers
 
 compileElement :: CElement -> State Environment [MIPSInstruction]
 compileElement (FuncDef t funcName args statements) = do
@@ -61,8 +61,12 @@ compileElement (FuncDef t funcName args statements) = do
             Nothing -> getRegsOfType "s"
             Just _ -> ("ra" :) <$> getRegsOfType "s"
 
-    pure $ Label label : saveStack saveRegs ++ [Empty] ++ body ++ [Empty, Label funcEnd] ++ restoreStack saveRegs ++ freeMemory ++ [Inst OP_JR "ra" "" ""]
+    -- finalInstr <- handleStackAccess body
+    let finalInstr = body
 
+    reserved <- stalloc 0 -- Requesting 0 more bytes will give us the top
+    modify $ purgeRegTypeEnv "result_stack"
+    pure $ Label label : saveStack reserved saveRegs ++ [Empty] ++ finalInstr ++ [Empty, Label funcEnd] ++ restoreStack reserved saveRegs ++ freeMemory ++ [Inst OP_JR "ra" "" ""]
     where
         freeMemory =
             case funcName of
@@ -70,6 +74,39 @@ compileElement (FuncDef t funcName args statements) = do
                 _ -> []
 
 compileElement _ = pure []
+
+getUnusedRegisters :: [String] -> [String]
+getUnusedRegisters regs = avail \\ regs
+    where avail = map (("t" ++) . show) [0..9] ++ map (("s" ++) . show) [0..7]
+
+handleStackAccess :: [MIPSInstruction] -> State Environment [MIPSInstruction]
+handleStackAccess instr = do
+    let index = findIndex (hasOperand ("result_stack" `isPrefixOf`)) instr
+
+    case index of
+        Nothing -> pure instr
+        Just i ->
+            case getUnusedRegisters $ getOperands $ instr !! i of
+                [] -> error "Fatal: Cannot figure out how to load registers from stack. All s and t registers are unavailable!"
+                (reg:_) -> do
+                    let stackReg = head $ filter ("result_stack" `isPrefixOf`) $ getOperands $ instr !! i
+
+                    offset <- stalloc 4
+                    loadOffset <- getStackLoc stackReg
+
+                    let Inst op a b c = instr !! i
+                    let startInstr = [Inst OP_SW reg (show offset) "sp", Inst OP_LW reg loadOffset "sp"]
+                    let endInstr = [Inst OP_SW reg loadOffset "sp", Inst OP_LW reg (show offset) "sp"]
+
+                    let beforeLoad = take i instr
+                    let newInstr
+                            | a == stackReg = Inst op reg b c
+                            | b == stackReg = Inst op a reg c
+                            | c == stackReg = Inst op a b reg
+                    let afterLoad = drop (i + 1) instr
+
+                    -- Keep going until there is no more stack access to handle.
+                    handleStackAccess $ beforeLoad ++ startInstr ++ [newInstr] ++ endInstr ++ afterLoad
 
 compileStatements :: [CStatement] -> State Environment [MIPSInstruction]
 compileStatements statements = do
@@ -79,35 +116,35 @@ compileStatements statements = do
     pure instr
     where
         go instructions statement = do
-            env <- get
             newInstr <- compileStatement statement
             pure $ instructions ++ newInstr
 
-compileCondition :: String -> CExpression -> State Environment [MIPSInstruction]
-compileCondition falseLabel st@(CBinaryOp And a b) =  do
-    aInstr <- compileCondition falseLabel a
-    bInstr <- compileCondition falseLabel b
+compileCondition :: String -> String -> CExpression -> State Environment [MIPSInstruction]
+compileCondition trueLabel falseLabel st@(CBinaryOp And a b) =  do
+    aInstr <- compileCondition "" falseLabel a
+    bInstr <- compileCondition "" falseLabel b
 
-    pure $ aInstr ++ bInstr
+    pure $ aInstr ++ bInstr ++ [Inst OP_J trueLabel "" ""]
 
-compileCondition falseLabel st@(CBinaryOp Or a b) = do
-    oneFalseLabel <- getNextLabel "one_false"
+compileCondition trueLabel falseLabel st@(CBinaryOp Or a b) = do
+    aInstr <- compileCondition trueLabel "" a
+    bInstr <- compileCondition trueLabel "" b
 
-    aInstr <- compileCondition oneFalseLabel a
-    bInstr <- compileCondition falseLabel b
-    pure $ aInstr ++ [Label oneFalseLabel] ++ bInstr
+    pure $ aInstr ++ bInstr ++ [Inst OP_J falseLabel "" ""]
 
-compileCondition falseLabel expr@(CBinaryOp op a b) = do
-    env <- get
+compileCondition trueLabel falseLabel expr@(CBinaryOp op a b) =
     let opposite = getBranchOpNeg op in do
-        (aReg, aInstr) <- compileExpressionTemp a
-        (bReg, bInstr) <- compileExpressionTemp b
+        (aReg, aInstr) <- compileExpression a
+        (bReg, bInstr) <- compileExpression b
 
         if op `elem` [CEQ, CNE, CLT, CGT, CLTE, CGTE] then
-            pure $ aInstr ++ bInstr ++ [Inst opposite aReg bReg falseLabel]
+            if not $ null falseLabel then
+                pure $ aInstr ++ bInstr ++ [Inst opposite aReg bReg falseLabel]
+            else
+                pure $ aInstr ++ bInstr ++ [Inst (getBranchOp op) aReg bReg trueLabel]
         else
-            compileCondition falseLabel (CBinaryOp CNE expr (LitInt 0))
-compileCondition falseLabel expr = compileCondition falseLabel (CBinaryOp CNE expr (LitInt 0))
+            compileCondition trueLabel falseLabel (CBinaryOp CNE expr (LitInt 0))
+compileCondition trueLabel falseLabel expr = compileCondition trueLabel falseLabel (CBinaryOp CNE expr (LitInt 0))
 
 -- Returns the label to go to in order to skip this block.
 handleIfStatement :: CStatement -> State Environment (String, [MIPSInstruction])
@@ -119,9 +156,10 @@ handleIfStatement st@(ElseBlock statements) = do
 
 handleIfStatement st@(IfStatement cond branches body) = do
     labelStart <- getNextLabel "if"
+    labelBody <- getNextLabel "if_body"
     labelEnd <- getNextLabel "if_end"
 
-    instr <- compileCondition labelEnd cond
+    instr <- compileCondition labelBody labelEnd cond
     finalEnv <- get
 
     bodyInstr <- compileStatements body
@@ -133,7 +171,7 @@ handleIfStatement st@(IfStatement cond branches body) = do
                 pure $ [Inst OP_J branchEnd "" "", Label labelEnd] ++ instrs
 
     modify $ purgeRegTypeEnv "t"
-    pure (labelEnd, [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ branchInstr)
+    pure (labelEnd, [Empty, Comment (readable st), Label labelStart] ++ instr ++ [Label labelBody] ++ bodyInstr ++ branchInstr)
 
 ----------------------------------
 -- Compile statements
@@ -154,7 +192,7 @@ compileStatement st@(VarDef (Var (Type varKind typeName) varName) ini) = do
         Nothing -> pure [Empty, Comment (readable st)]
         Just (LitInt n) -> pure [Empty, Comment (readable st), Inst OP_LI reg (show n) ""]
         Just initializer -> do
-            (source, instructions) <- compileExpressionTemp initializer
+            (source, instructions) <- compileExpression initializer
             modify $ purgeRegTypeEnv "t"
             pure $ Empty : Comment (readable st) : instructions ++ [Inst OP_MOVE reg source ""]
 
@@ -165,16 +203,16 @@ compileStatement ifStatement@IfStatement{} = do
 
 compileStatement st@(WhileStatement cond body) = do
     labelStart <- getNextLabel "while"
+    labelBody <- getNextLabel "while_body"
     labelEnd <- getNextLabel "while_end"
 
-    instr <- compileCondition labelEnd cond
+    instr <- compileCondition labelBody labelEnd cond
     bodyInstr <- compileStatements body
 
     modify $ purgeRegTypeEnv "t"
-    pure $ [Empty, Comment (readable st), Label labelStart] ++ instr ++ bodyInstr ++ [Inst OP_J labelStart "" "", Label labelEnd]
+    pure $ [Empty, Comment (readable st), Label labelStart] ++ instr ++ [Label labelBody] ++ bodyInstr ++ [Inst OP_J labelStart "" "", Label labelEnd]
 
 compileStatement st@(ForStatement ini cond step body) = do
-    env <- get
     instrIni <- compileStatement ini
     instr <- compileStatement $ WhileStatement cond (body ++ [step])
 
@@ -182,9 +220,7 @@ compileStatement st@(ForStatement ini cond step body) = do
     pure $ Empty : Comment (readable st) : instrIni ++ instr
 
 compileStatement st@(Return expr) = do
-    env <- get
-
-    (source, instr) <- compileExpressionTemp expr
+    (source, instr) <- compileExpression expr
 
     fInfo <- getFuncLabel =<< getCurFunc
 
@@ -196,14 +232,14 @@ compileStatement st@(Return expr) = do
     pure $ Empty : Comment (readable st) : instr ++ [Inst OP_MOVE "v0" source "", Inst OP_J funcEnd "" ""]
 
 compileStatement st@(Assign assignKind lhs rhs) = do
-    (source, instr) <- compileExpressionTemp rhs
+    (source, instr) <- compileExpression rhs
 
     (reg, accessInstr, postAccessInstr) <- do
             let assignOp x r = case assignKind of
                                 Nothing -> [Inst OP_MOVE x source ""]
                                 Just op -> [Inst (opFind op) x r source]
 
-            (reg, instr) <- compileExpressionTemp lhs
+            (reg, instr) <- compileExpression lhs
 
             if not $ null instr then
                 case last instr of
@@ -221,7 +257,7 @@ compileStatement st@(Assign assignKind lhs rhs) = do
     pure $ Empty : Comment (readable st) : accessInstr ++ instr ++ postAccessInstr
 
 compileStatement st@(ExprStatement expr) = do
-    (_, instr) <- compileExpressionTemp expr
+    (_, instr) <- compileExpression expr
 
     modify $ purgeRegTypeEnv "t"
     pure $ Empty : Comment (readable st) : instr
@@ -229,8 +265,44 @@ compileStatement st@(ExprStatement expr) = do
 compileStatement CComment{} = pure []
 
 ---------------------------------------------
--- Compile Expression (using temp registers)
+-- Compile Expressions
 ---------------------------------------------
+countFunctionCalls :: CExpression -> Int
+countFunctionCalls (FuncCall _ exprs) = 1 + sum (map countFunctionCalls exprs)
+countFunctionCalls (MemberAccess a b) = countFunctionCalls a + countFunctionCalls b
+countFunctionCalls (CPrefix _ expr) = countFunctionCalls expr
+countFunctionCalls (CPostfix _ expr) = countFunctionCalls expr
+countFunctionCalls (CArrayAccess a b) = countFunctionCalls a + countFunctionCalls b
+countFunctionCalls (CBinaryOp _ a b) = countFunctionCalls a + countFunctionCalls b
+countFunctionCalls _ = 0
+
+getReg :: String -> State Environment String
+getReg r =
+    if "t" `isPrefixOf` r then do
+        exists <- registerNameExists r
+        if exists then do
+            rName <- getRegister r
+            pure rName
+        else
+            useNextRegister "result_stack" r
+    else
+        pure r
+
+useStack :: MIPSInstruction -> State Environment MIPSInstruction
+useStack (Inst op a b c) = Inst op <$> getReg a <*> getReg b <*> getReg c
+useStack i = pure i
+
+-- Compile expressions, but check if there is more than one function call in the expression.
+-- If so, we will save all temp registers on the stack to be safe.
+compileExpression :: CExpression -> State Environment (String, [MIPSInstruction])
+compileExpression expr = do
+    (reg, instr) <- compileExpressionTemp expr
+
+    if countFunctionCalls expr > 1 then
+        (,) <$> getReg reg <*> mapM useStack instr
+    else
+        pure (reg, instr)
+
 compileExpressionTemp :: CExpression -> State Environment (String, [MIPSInstruction])
 compileExpressionTemp (VarRef varName) = do
     fInfo <- getFuncLabel varName
@@ -339,7 +411,6 @@ compileExpressionTemp (FuncCall "sizeof" [arg]) = compileSizeof arg
 -- compileExpressionTemp (FuncCall "free" [arg]) = compileFree arg -- TODO: Figure this out.
 
 compileExpressionTemp (FuncCall funcName args) = do
-    env <- get
     let go (curRegs, curInstr) expr = do
             (reg, newInstr) <- compileExpressionTemp expr
             pure (curRegs ++ [reg], curInstr ++ newInstr)

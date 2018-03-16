@@ -10,7 +10,7 @@ data VarKind = Pointer | Value
 data PreKind = Include
              | IfNDef
              | EndIf
-             | Define
+             | CDefine
              | MiscPreKind
     deriving (Show, Eq)
 
@@ -71,6 +71,8 @@ data CExpression = VarRef String
 
 data CFile = CFile String [CElement]
     deriving Show
+
+cBooleanOps = ["||", "&&", ">", "<", ">=", "<="]
 
 cArithOps = [("*", Mult), ("/", Div), ("%", Mod), ("+", Add), ("-", Minus),
              ("||", Or), ("&&", And),

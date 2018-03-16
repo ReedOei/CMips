@@ -1,5 +1,6 @@
 module Main where
 
+import Data.List (isSuffixOf)
 import Data.Maybe (fromMaybe)
 
 import System.Environment (getArgs)
@@ -11,6 +12,7 @@ import Compiler.Compiler
 import Compiler.CodeGenerator
 import Parser
 import LispParser
+import LispCompiler
 
 options :: [OptDescr String]
 options = [Option ['o'] ["output"] (ReqArg id "FILE") "output file"]
@@ -21,7 +23,10 @@ main = do
 
     case getOpt Permute options args of
         (o, [filename], []) -> do
-            text <- generateFile . compile <$> loadFile filename
+            text <- if "lisp" `isSuffixOf` filename then
+                        generateFile . compile . compileLisp <$> loadLispFile filename
+                    else
+                        generateFile . compile <$> loadFile filename
 
             putStrLn text
 
