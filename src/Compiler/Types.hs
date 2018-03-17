@@ -151,8 +151,8 @@ emptyEnvironment = Environment (CFile "" []) (Data [] []) (Global [] Map.empty "
 newEnvironment :: CFile -> Environment
 newEnvironment file = Environment file (Data [] []) (Global [] Map.empty "") (Local 0 Map.empty Map.empty)
 
-resetStack :: Environment -> Environment
-resetStack (Environment file d global (Local _ registers stackLocs)) = Environment file d global $ Local 0 registers stackLocs
+resetLocal :: Environment -> Environment
+resetLocal (Environment file d global _) = Environment file d global $ Local 0 Map.empty Map.empty
 
 setCurFunc :: String -> State Environment ()
 setCurFunc curFunc = modify (\(Environment file d (Global labels funcs _) local) -> Environment file d (Global labels funcs curFunc) local)

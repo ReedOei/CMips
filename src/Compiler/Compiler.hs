@@ -28,8 +28,7 @@ compile file@(CFile fname elements) = MIPSFile fname sections instructions
         state = foldM go [] elements
         go prev element = do
             newInstructions <- compileElement element
-            modify $ purgeRegTypesEnv ["s", "t", "result_stack"]
-            modify resetStack
+            modify resetLocal
 
             return $ prev ++ [newInstructions]
 
@@ -181,7 +180,6 @@ compileStatement :: CStatement -> State Environment [MIPSInstruction]
 compileStatement st@(VarDef (Var FunctionPointer{} varName) ini) = do
     reg <- useNextRegister "s" varName
 
-
     case ini of
         Just (VarRef name) -> do
             fInfo <- getFuncLabel name
@@ -209,6 +207,7 @@ compileStatement st@(VarDef (Var (Type varKind typeName) varName) ini) = do
 
 compileStatement ifStatement@IfStatement{} = do
     (_, instr) <- handleIfStatement ifStatement
+    modify $ purgeRegTypeEnv "t"
     pure instr
 
 compileStatement st@(WhileStatement cond body) = do
@@ -304,7 +303,8 @@ getReg r =
             rName <- getRegister r
             pure rName
         else
-            useNextRegister "result_stack" r
+            -- Prefer using s registers first. Once we run out, we'll automatically switch to using stack_result registers
+            useNextRegister "s" r
     else
         pure r
 

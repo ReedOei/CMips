@@ -250,7 +250,7 @@ compileExpr fname (Evaluate (Identifier called) args) = do
                 let callSeq = map (\st -> (NamedType "void", Right st)) [loadSt, argCountSt, argSt]
 
                 if length exprs == argCount then -- Just execute it.
-                    pure $ initializationSts ++ [(NamedType "void", Right loadSt)] ++ [(returnType, Left $ FuncCall loadName [argList])]
+                    pure $ initializationSts ++ [(returnType, Left $ FuncCall called [argList])]
                 else do -- partially apply
                     let resSt = FuncCall "apply" [FuncCall "cons" [VarRef loadName, FuncCall "cons" [VarRef argCountName, VarRef argsName]]]
                     pure $ initializationSts ++ callSeq ++ [(returnType, Left resSt)]

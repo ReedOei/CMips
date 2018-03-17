@@ -119,6 +119,16 @@
        bs
        (cons (car as) (concat (cdr as) bs))))
 
+(def (fibgen limit a b)
+     (if (< a limit)
+       (cons a (fibgen limit b (+ a b)))
+       '()))
+
+(def (fibs limit) (fibgen limit 0 1))
+
 (def (main)
+     (printlist (filter even (fibs 4000000)))
+     (printf "\n")
+     (printf "The sum is %d\n" (sum (filter even (fibs 4000000))))
      (printlist (filter prime (build 1 100))))
 
