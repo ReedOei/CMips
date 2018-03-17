@@ -102,6 +102,7 @@ readableType :: Type -> String
 readableType (NamedType name) = name
 readableType (Type Pointer t) = readableType t ++ " *"
 readableType (Type Value t) = readableType t
+readableType (FunctionPointer retType argTypes) = readableType retType ++ "(" ++ intercalate "," (map readableType argTypes) ++ ")"
 
 readableVar :: Var -> String
 readableVar (Var t varName) = readableType t ++ " " ++ varName
@@ -121,6 +122,25 @@ readable (WhileStatement cond _) = "while (" ++ readableExpr cond ++ ")"
 readable (ForStatement ini cond step _) = "for (" ++ readable ini ++ " " ++ readableExpr cond ++ "; " ++ init (readable step) ++ ")"
 readable (Assign op accessExpr expr) = readableExpr accessExpr ++ " " ++ maybeOp op ++ "= " ++ readableExpr expr ++ ";"
 
+fullReadableSt :: CStatement -> String
+fullReadableSt st@(ForStatement _ _ _ body) =
+    readable st ++ " {\n" ++
+        intercalate "\n" (map (("    " ++) . fullReadableSt) body) ++ "\n" ++
+    "}"
+fullReadableSt st@(WhileStatement _ body) =
+    readable st ++ " {\n" ++
+        intercalate "\n" (map (("    " ++) . fullReadableSt) body) ++ "\n" ++
+    "}"
+fullReadableSt st@(IfStatement _ elseBlock body) =
+    readable st ++ " {\n" ++
+        intercalate "\n" (map (("    " ++) . fullReadableSt) body) ++ "\n" ++
+    "} " ++ fromMaybe "" (fullReadableSt <$> elseBlock)
+fullReadableSt st@(ElseBlock body) =
+    " " ++ readable st ++ " {\n" ++
+        intercalate "\n" (map (("    " ++) . fullReadableSt) body) ++ "\n" ++
+    "}"
+fullReadableSt st = readable st
+
 readableExpr :: CExpression -> String
 readableExpr (LitInt n) = show n
 readableExpr (LitString s) = show s
@@ -134,4 +154,17 @@ readableExpr (CPrefix op expr) = readablePrefix op ++ readableExpr expr
 readableExpr (CPostfix op expr) = readableExpr expr ++ readablePostfix op
 readableExpr (CArrayAccess accessExpr expr) = readableExpr accessExpr ++ "[" ++ readableExpr expr ++ "]"
 readableExpr (MemberAccess a b) = readableExpr a ++ "." ++ readableExpr b
+
+readableElement :: CElement -> String
+readableElement (StructDef name vars) =
+    "struct " ++ name ++ "{\n" ++
+        intercalate "\n" (map ((++ ";") . ("    " ++ ) . readableVar) vars) ++ "\n" ++
+    "};"
+readableElement (FuncDef retType name args body) =
+    readableType retType ++ " " ++ name ++ "(" ++ intercalate "," (map readableVar args) ++ ") {\n" ++
+        intercalate "\n" (map (("    " ++) . fullReadableSt) body) ++ "\n" ++
+    "}"
+
+readableFile :: CFile -> String
+readableFile (CFile _ elements) = intercalate "\n\n" $ map readableElement elements
 

@@ -16,6 +16,7 @@ import Compiler.Resolver
 import Compiler.Types
 import CLanguage
 import MIPSLanguage
+import Util
 
 import System.IO.Unsafe
 
@@ -61,8 +62,8 @@ compileElement (FuncDef t funcName args statements) = do
             Nothing -> getRegsOfType "s"
             Just _ -> ("ra" :) <$> getRegsOfType "s"
 
-    -- finalInstr <- handleStackAccess body
-    let finalInstr = body
+    finalInstr <- handleStackAccess body
+    -- let finalInstr = body
 
     reserved <- stalloc 0 -- Requesting 0 more bytes will give us the top
     modify $ purgeRegTypeEnv "result_stack"
@@ -81,29 +82,24 @@ getUnusedRegisters regs = avail \\ regs
 
 handleStackAccess :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 handleStackAccess instr = do
-    let index = findIndex (hasOperand ("result_stack" `isPrefixOf`)) instr
-
-    case index of
+    case findSplit (hasOperand ("result_stack" `isPrefixOf`)) instr of
         Nothing -> pure instr
-        Just i ->
-            case getUnusedRegisters $ getOperands $ instr !! i of
+        Just (beforeLoad, Inst op a b c, afterLoad) ->
+            case getUnusedRegisters [a,b,c] of
                 [] -> error "Fatal: Cannot figure out how to load registers from stack. All s and t registers are unavailable!"
                 (reg:_) -> do
-                    let stackReg = head $ filter ("result_stack" `isPrefixOf`) $ getOperands $ instr !! i
+                    let stackReg = head $ filter ("result_stack" `isPrefixOf`) [a,b,c]
 
                     offset <- stalloc 4
                     loadOffset <- getStackLoc stackReg
 
-                    let Inst op a b c = instr !! i
                     let startInstr = [Inst OP_SW reg (show offset) "sp", Inst OP_LW reg loadOffset "sp"]
                     let endInstr = [Inst OP_SW reg loadOffset "sp", Inst OP_LW reg (show offset) "sp"]
 
-                    let beforeLoad = take i instr
                     let newInstr
                             | a == stackReg = Inst op reg b c
                             | b == stackReg = Inst op a reg c
                             | c == stackReg = Inst op a b reg
-                    let afterLoad = drop (i + 1) instr
 
                     -- Keep going until there is no more stack access to handle.
                     handleStackAccess $ beforeLoad ++ startInstr ++ [newInstr] ++ endInstr ++ afterLoad
@@ -137,13 +133,18 @@ compileCondition trueLabel falseLabel expr@(CBinaryOp op a b) =
         (aReg, aInstr) <- compileExpression a
         (bReg, bInstr) <- compileExpression b
 
-        if op `elem` [CEQ, CNE, CLT, CGT, CLTE, CGTE] then
-            if not $ null falseLabel then
-                pure $ aInstr ++ bInstr ++ [Inst opposite aReg bReg falseLabel]
-            else
-                pure $ aInstr ++ bInstr ++ [Inst (getBranchOp op) aReg bReg trueLabel]
+        res <- if op `elem` [CEQ, CNE, CLT, CGT, CLTE, CGTE] then
+                    if not $ null falseLabel then
+                        pure $ aInstr ++ bInstr ++ [Inst opposite aReg bReg falseLabel]
+                    else
+                        pure $ aInstr ++ bInstr ++ [Inst (getBranchOp op) aReg bReg trueLabel]
+                else
+                    compileCondition trueLabel falseLabel (CBinaryOp CNE expr (LitInt 0))
+
+        if countFunctionCalls expr > 0 then
+            makeCallSafe res
         else
-            compileCondition trueLabel falseLabel (CBinaryOp CNE expr (LitInt 0))
+            pure res
 compileCondition trueLabel falseLabel expr = compileCondition trueLabel falseLabel (CBinaryOp CNE expr (LitInt 0))
 
 -- Returns the label to go to in order to skip this block.
@@ -180,10 +181,19 @@ compileStatement :: CStatement -> State Environment [MIPSInstruction]
 compileStatement st@(VarDef (Var FunctionPointer{} varName) ini) = do
     reg <- useNextRegister "s" varName
 
+
     case ini of
-        Just (VarRef name) -> pure [Inst OP_LA reg name ""]
+        Just (VarRef name) -> do
+            fInfo <- getFuncLabel name
+            case fInfo of
+                Just (funcLabel, _) -> pure [Empty, Comment (readable st), Inst OP_LA reg funcLabel ""]
+        Just initializer -> do
+            (source, instructions) <- compileExpression initializer
+            modify $ purgeRegTypeEnv "t"
+            pure $ Empty : Comment (readable st) : instructions ++ [Inst OP_MOVE reg source ""]
         Nothing -> pure [Empty, Comment (readable st)]
 
+compileStatement (VarDef (Var (NamedType name) varName) ini) = compileStatement (VarDef (Var (Type Value (NamedType name)) varName) ini)
 compileStatement st@(VarDef (Var (Type varKind typeName) varName) ini) = do
     reg <- useNextRegister "s" varName
 
@@ -276,6 +286,16 @@ countFunctionCalls (CArrayAccess a b) = countFunctionCalls a + countFunctionCall
 countFunctionCalls (CBinaryOp _ a b) = countFunctionCalls a + countFunctionCalls b
 countFunctionCalls _ = 0
 
+getVarRefs :: CExpression -> [String]
+getVarRefs (VarRef x) = [x]
+getVarRefs (FuncCall fname exprs) = fname : concatMap getVarRefs exprs -- fname could be a var ref, if it is a function pointer variable.
+getVarRefs (MemberAccess a b) = getVarRefs a -- Only refs in the front half will count, because the ones in the second half will just be members
+getVarRefs (CPrefix _ expr) = getVarRefs expr
+getVarRefs (CPostfix _ expr) = getVarRefs expr
+getVarRefs (CArrayAccess a b) = getVarRefs a ++ getVarRefs b
+getVarRefs (CBinaryOp _ a b) = getVarRefs a ++ getVarRefs b
+getVarRefs _ = []
+
 getReg :: String -> State Environment String
 getReg r =
     if "t" `isPrefixOf` r then do
@@ -292,14 +312,20 @@ useStack :: MIPSInstruction -> State Environment MIPSInstruction
 useStack (Inst op a b c) = Inst op <$> getReg a <*> getReg b <*> getReg c
 useStack i = pure i
 
+makeCallSafe :: [MIPSInstruction] -> State Environment [MIPSInstruction]
+makeCallSafe = mapM useStack
+
 -- Compile expressions, but check if there is more than one function call in the expression.
 -- If so, we will save all temp registers on the stack to be safe.
 compileExpression :: CExpression -> State Environment (String, [MIPSInstruction])
 compileExpression expr = do
     (reg, instr) <- compileExpressionTemp expr
 
-    if countFunctionCalls expr > 1 then
-        (,) <$> getReg reg <*> mapM useStack instr
+    if countFunctionCalls expr > 0 then
+        case expr of
+            -- If there's only one function call and this expression is it, we don't need to waste time with saving stuff on the stack.
+            FuncCall{} | countFunctionCalls expr == 1 -> pure (reg, instr)
+            _ -> (,) <$> getReg reg <*> mapM useStack instr
     else
         pure (reg, instr)
 
