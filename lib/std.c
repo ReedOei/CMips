@@ -1,5 +1,5 @@
 struct List {
-    void *value;
+    List *value; // Because we don't have real typecasting...
     List *tail;
 };
 

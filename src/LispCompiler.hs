@@ -307,6 +307,14 @@ handleStdFunction fname (Evaluate (Identifier called) args) = do
 
     let retType = defaultType
 
+    let resSt = if called == "car" then
+                    MemberAccess (CPrefix Dereference (head exprs)) (VarRef "value")
+                else if called == "cdr" then
+                    MemberAccess (CPrefix Dereference (head exprs)) (VarRef "tail")
+                else
+                    FuncCall called exprs
+
+
     pure $ initializationSts ++ [(retType, Left resSt)]
 
 isStdLibraryFunction :: String -> Bool
