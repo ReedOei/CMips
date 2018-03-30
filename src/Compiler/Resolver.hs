@@ -18,8 +18,10 @@ sizeof (NamedType "short") = 2
 sizeof (NamedType "long long int") = 8
 sizeof (NamedType "double") = 8
 sizeof (NamedType _) = 4
+sizeof (StructType (StructDef _ vars)) = sum $ map (sizeof . (\(Var varType _) -> varType)) vars
 sizeof (Type Pointer _) = 4 -- 32 bit pointers.
 sizeof (Type Value t) = sizeof t
+sizeof (Array size t) = size * sizeof t
 sizeof _ = 4
 
 findTypesElement :: CElement -> [Var]
@@ -49,13 +51,26 @@ findStructDef structName (s@(StructDef checkName _):rest)
     | otherwise = findStructDef structName rest
 findStructDef structName (_:rest) = findStructDef structName rest
 
+getStructSizes :: Type -> Int
+getStructSizes (Array arrSize t) = sizeof t
+getStructSizes t = sizeof t
+
+structPadding :: [Type] -> Int
+structPadding types = maximum $ map getStructSizes types
+
 -- Returns the offset of the member of the struct.
 getStructOffset :: CExpression -> String -> State Environment Int
 getStructOffset expr member = do
-    StructType (StructDef _ members) <- resolveType expr >>= elaborateType
+    t <- resolveType expr >>= elaborateType
+
+    let members =
+            case t of
+                Type Value (StructType (StructDef _ ms)) -> ms
+                StructType (StructDef _ ms) -> ms
+                _ -> error $ "Tried to get struct offset for member '" ++ member ++ "' but type is '" ++ show t ++ "' which is not a struct."
 
     types <- mapM (\(Var varType _) -> elaborateType varType) members
-    let maxSize = maximum $ map sizeof types
+    let maxSize = structPadding types
 
     let varTypes = map (\(Var varType _) -> varType) $ takeWhile (\(Var _ name) -> name /= member) members
     foldM (\n t -> do
@@ -69,6 +84,30 @@ resolveFuncCall funcName = do
     case findFuncCall funcName elements of
         Nothing -> error $ "Unresolved reference to function: " ++ funcName
         Just f -> pure f
+
+elaborateTypesVar :: Var -> State Environment Var
+elaborateTypesVar (Var varType varName) = Var <$> (elaborateType varType) <*> pure varName
+
+elaborateTypes :: CElement -> State Environment CElement
+elaborateTypes (FuncDef t funcName vars statements) =
+    FuncDef <$> elaborateType t
+            <*> pure funcName
+            <*> mapM elaborateTypesVar vars
+            <*> mapM elaborateTypesSt statements
+elaborateTypes e = pure e
+
+elaborateTypesSt :: CStatement -> State Environment CStatement
+elaborateTypesSt (VarDef var expr) = VarDef <$> elaborateTypesVar var <*> pure expr
+elaborateTypesSt (IfStatement cond (Just elseBlock) body) = IfStatement <$> pure cond <*> (Just <$> elaborateTypesSt elseBlock) <*> mapM elaborateTypesSt body
+elaborateTypesSt (IfStatement cond Nothing body) = IfStatement <$> pure cond <*> pure Nothing <*> mapM elaborateTypesSt body
+elaborateTypesSt (ElseBlock body) = ElseBlock <$> mapM elaborateTypesSt body
+elaborateTypesSt (WhileStatement cond body) = WhileStatement <$> pure cond <*> mapM elaborateTypesSt body
+elaborateTypesSt (ForStatement init cond step body) =
+    ForStatement <$> elaborateTypesSt init
+                 <*> pure cond
+                 <*> elaborateTypesSt step
+                 <*> mapM elaborateTypesSt body
+elaborateTypesSt st = pure st
 
 elaborateType :: Type -> State Environment Type
 elaborateType (NamedType structName) = do
@@ -96,6 +135,7 @@ resolveType (CPrefix Dereference expr) = do
 
     case t of
         Type Pointer a -> pure a
+        Array _ t -> pure t
         _ -> error $ "Cannot dereference non-pointer type '" ++ show t ++ "' in expression: " ++ show expr
 resolveType (CPrefix _ expr) = resolveType expr
 
@@ -108,12 +148,15 @@ resolveType (MemberAccess accessExpr (VarRef name)) = do
     accessType <- resolveType accessExpr
     structType <- elaborateType accessType
 
-    case structType of
-        StructType (StructDef structName vars) ->
-            case find (\(Var _ varName) -> varName == name) vars of
-                Nothing -> error $ "Reference to struct '" ++ structName ++ "' member '" ++ name ++ "' undefined."
-                Just (Var t _) -> pure t
-        t -> error $ "Cannot access member of non-struct type: " ++ show t
+    let (structName, vars) =
+            case structType of
+                Type Value (StructType (StructDef structName vars)) -> (structName, vars)
+                StructType (StructDef structName vars) -> (structName, vars)
+                t -> error $ "Cannot access member of non-struct type: " ++ show t
+
+    case find (\(Var _ varName) -> varName == name) vars of
+        Nothing -> error $ "Reference to struct '" ++ structName ++ "' member '" ++ name ++ "' undefined."
+        Just (Var t _) -> pure t
 
 resolveType expr@(CBinaryOp _ a b) = do
     aType <- resolveType a

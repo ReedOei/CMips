@@ -43,6 +43,7 @@ generateInstruction (Comment comment) = "# " ++ comment
 generateInstruction (Inst funct rd rs rt) =
     case funct of
         SYSCALL -> "syscall"
+        LIT_ASM -> rd
         OP_MOVE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs
         OP_LI -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs
         OP_LA -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs

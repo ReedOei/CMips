@@ -35,7 +35,32 @@ cElement :: CharParser st CElement
 cElement = try preprocessorParser <|>
              try functionParser <|>
              try structParser <|>
+             try inlineParser <|>
              pure MiscElement
+
+inlineParser :: CharParser st CElement
+inlineParser = do
+    string "inline"
+    newlines
+
+    returnType <- typeParser
+    wsSkip
+
+    funcName <- cIdentifier
+
+    arguments <- between (char '(') (char ')') $ sepBy (try varParser) (char ',')
+
+    wsSkip
+    next <- lookAhead (choice [char ';', char '{'])
+
+    if next == ';' then do
+        char ';'
+
+        pure $ Inline returnType funcName arguments []
+    else do
+        body <- between (char '{') (char '}') $ sepEndBy (many (noneOf "}\n\r")) newlines
+
+        pure $ Inline returnType funcName arguments $ filter (not . null) body
 
 cIdentifier :: CharParser st String
 cIdentifier = do
@@ -128,7 +153,7 @@ typeParser :: CharParser st Type
 typeParser = do
     wsSkip
     typeName <- do
-        mod <- many (choice [string "struct", string "long", string "unsigned"] >>= (\str -> char ' ' >> pure str))
+        mod <- many (choice (map try [string "struct", string "long", string "unsigned"]) >>= (\str -> char ' ' >> pure str))
         t <- cIdentifier
         notFollowedBy (char '(')
         return $ unwords $ mod ++ [t]
@@ -183,15 +208,21 @@ varParser = do
     (varKind, varName) <- varNameParser
 
     arguments <- optionMaybe $ between (char '(') (char ')') $ sepBy (try varParser) (char ',')
+    arrSize <- optionMaybe (read <$> between (char '[') (char ']') (many digit))
 
-    case arguments of
-        Nothing -> pure $ Var varType varName
-        Just args ->
-            if varKind == Pointer then
-                let argTypes = map (\(Var varType _) -> varType) args in
-                    pure $ Var (FunctionPointer varType argTypes) varName
-            else
-                error "Cannot have arguments to a variable that is not a function pointer!"
+    let tempType =
+            case arguments of
+                Nothing -> varType
+                Just args ->
+                    if varKind == Pointer then
+                        let argTypes = map (\(Var varType _) -> varType) args in
+                            FunctionPointer varType argTypes
+                    else
+                        error "Cannot have arguments to a variable that is not a function pointer!"
+
+    case arrSize of
+        Nothing -> pure $ Var tempType varName
+        Just arrSize -> pure $ Var (Array arrSize tempType) varName
 
     where
         innerParser = do
@@ -362,10 +393,11 @@ operatorTable =
         [arrayAccessOperator],
         [prefix "++" PreIncrement, prefix "--" PreDecrement, prefix "*" Dereference, prefix "!" PreNot, prefix "&" AddressOf],
         [postfix "++" PostIncrement, postfix "--" PostDecrement],
+        [binary "<<" ShiftLeft, binary ">>" ShiftRight],
         [binary "*" Mult, binary "/" Div, binary "%" Mod],
         [binary "+" Add, binary "-" Minus],
         [binary ">=" CGTE, binary "<=" CLTE, binary ">" CGT, binary "<" CLT, binary "==" CEQ, binary "!=" CNE],
-        [binary "^" Xor, binary "<<" ShiftLeft, binary ">>" ShiftRight, binary "&" AndBit, binary "|" OrBit],
+        [binary "^" Xor, binary "&" AndBit, binary "|" OrBit],
         [binary "&&" And, binary "||" Or]
     ]
 

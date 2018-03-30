@@ -18,6 +18,7 @@ data Type = NamedType String
           | Type VarKind Type
           | FunctionPointer Type [Type] -- Return type and argument types.
           | StructType CElement
+          | Array Int Type -- An array of fixed size (like int arr[5];)
     deriving (Show, Eq)
 
 data Var = Var Type String
@@ -27,6 +28,7 @@ data CElement = Preprocessor PreKind String
                 | FuncDef Type String [Var] [CStatement]
                 | StructDef String [Var]
                 | MiscElement
+                | Inline Type String [Var] [String]
     deriving (Show, Eq)
 
 data CStatement = Return CExpression
@@ -103,6 +105,8 @@ readableType (NamedType name) = name
 readableType (Type Pointer t) = readableType t ++ " *"
 readableType (Type Value t) = readableType t
 readableType (FunctionPointer retType argTypes) = readableType retType ++ "(" ++ intercalate "," (map readableType argTypes) ++ ")"
+readableType (Array arrSize t) = readableType t ++ "[" ++ show arrSize ++ "]"
+readableType (StructType (StructDef structName _)) = structName
 
 readableVar :: Var -> String
 readableVar (Var t varName) = readableType t ++ " " ++ varName

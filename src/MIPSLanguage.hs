@@ -43,6 +43,7 @@ data MIPSOp = OP_ADD
             | OP_REM
             | OP_NOT
             | SYSCALL
+            | LIT_ASM -- Used for inlining assembly.
     deriving (Show, Eq)
 
 mnemonic :: MIPSOp -> String

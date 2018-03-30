@@ -21,16 +21,22 @@ import Util
 import System.IO.Unsafe
 
 compile :: CFile -> MIPSFile
-compile file@(CFile fname elements) = MIPSFile fname sections instructions
+compile file@(CFile fname initElements) = MIPSFile fname sections instructions
     where
         sections = [generateDataSection "data" d, generateDataSection "kdata" kd, MIPSSection "text" []]
-        (instructions, Environment _ (Data d kd) _ _) = runState state $ newEnvironment file
-        state = foldM go [] elements
+        (instructions, Environment _ (Data d kd) _ _) = runState state $ newEnvironment $ CFile fname elements
+        elements = fakeFunctions ++ initElements
+        fakeFunctions = concatMap generateFuncDec initElements
+        state = foldM go [] =<< mapM elaborateTypes elements
         go prev element = do
             newInstructions <- compileElement element
             modify resetLocal
 
             return $ prev ++ [newInstructions]
+
+generateFuncDec :: CElement -> [CElement]
+generateFuncDec (Inline retType funcName vars _) = [FuncDef retType funcName vars []]
+generateFuncDec _ = []
 
 generateDataSection :: String -> [DataElement] -> MIPSSection
 generateDataSection sectionName elements =
@@ -46,32 +52,39 @@ restoreStack reserved registers = restoreInstr ++ [Inst OP_ADD "sp" "sp" (show (
 
 compileElement :: CElement -> State Environment [MIPSInstruction]
 compileElement (FuncDef t funcName args statements) = do
-    (label, funcEnd) <- funcLabel funcName
+    if null statements then
+        pure []
+    else do
+        (label, funcEnd) <- funcLabel funcName
 
-    setCurFunc funcName
+        setCurFunc funcName
 
-    argInstr <- generateArgs args
+        argInstr <- generateArgs args
 
-    instr <- compileStatements statements
+        instr <- compileStatements statements
 
-    let body = argInstr ++ instr
-    saveRegs <-
-        case find isJAL body of
-            -- We only need to save the return address if there's a jal in the body.
-            Nothing -> getRegsOfType "s"
-            Just _ -> ("ra" :) <$> getRegsOfType "s"
+        let body = argInstr ++ instr
+        saveRegs <-
+            case find isJAL body of
+                -- We only need to save the return address if there's a jal in the body.
+                Nothing -> getRegsOfType "s"
+                Just _ -> ("ra" :) <$> getRegsOfType "s"
 
-    finalInstr <- handleStackAccess body
-    -- let finalInstr = body
+        finalInstr <- handleStackAccess body
+        -- let finalInstr = body
 
-    reserved <- stalloc 0 -- Requesting 0 more bytes will give us the top
-    modify $ purgeRegTypeEnv "result_stack"
-    pure $ Label label : saveStack reserved saveRegs ++ [Empty] ++ finalInstr ++ [Empty, Label funcEnd] ++ restoreStack reserved saveRegs ++ freeMemory ++ [Inst OP_JR "ra" "" ""]
+        reserved <- stalloc 0 -- Requesting 0 more bytes will give us the top
+        modify $ purgeRegTypeEnv "result_stack"
+        pure $ Label label : saveStack reserved saveRegs ++ [Empty] ++ finalInstr ++ [Empty, Label funcEnd] ++ restoreStack reserved saveRegs ++ freeMemory ++ [Inst OP_JR "ra" "" ""]
     where
         freeMemory =
             case funcName of
                 "main" -> [Inst OP_LI "v0" "10" "", Inst SYSCALL "" "" ""]
                 _ -> []
+compileElement (Inline t funcName args statements) = do
+    (label, funcEnd) <- funcLabel funcName
+
+    pure $ Label label : map (\str -> Inst LIT_ASM str "" "") statements
 
 compileElement _ = pure []
 
@@ -80,7 +93,7 @@ getUnusedRegisters regs = avail \\ regs
     where avail = map (("t" ++) . show) [0..9] ++ map (("s" ++) . show) [0..7]
 
 handleStackAccess :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-handleStackAccess instr = do
+handleStackAccess instr =
     case findSplit (hasOperand ("result_stack" `isPrefixOf`)) instr of
         Nothing -> pure instr
         Just (beforeLoad, Inst op a b c, afterLoad) ->
@@ -361,14 +374,40 @@ compileExpressionTemp (CArrayAccess accessExpr expr) = do
     (access, accessInstr) <- compileExpressionTemp accessExpr
 
     dest <- useNextRegister "t" $ readableExpr accessExpr ++ "_access"
-    varType <- resolveType $ CPrefix Dereference accessExpr
+    varType <- resolveType (CPrefix Dereference accessExpr) >>= elaborateType
+
+    doAccess <- case accessExpr of
+                        MemberAccess e (VarRef name) -> do
+                            t <- resolveType accessExpr >>= elaborateType
+
+                            case t of
+                                Array _ _ -> pure $ init accessInstr
+                                _ -> pure accessInstr
+                        _ -> pure accessInstr
+
+    structOffset <- case accessExpr of
+                        MemberAccess e (VarRef name) -> do
+                            t <- resolveType accessExpr >>= elaborateType
+
+                            case t of
+                                Array _ _ -> do
+                                    n <- getStructOffset e name
+                                    pure [Inst OP_ADD dest dest (show n)]
+                                _ -> pure []
+                        _ -> pure []
 
     case sizeof varType of
-        1 -> pure (dest, instr ++ accessInstr ++ [Inst OP_ADD dest source access, -- Calculate address to load.
-                                                  Inst OP_LB dest "0" dest]) -- Load memory, using lb instead of lw.
-        size -> pure (dest, instr ++ accessInstr ++ [Inst OP_MUL dest source $ show $ sizeof varType,
-                                                     Inst OP_ADD dest dest access, -- Calculate address to load.
-                                                     Inst OP_LW dest "0" dest]) -- Load memory
+        1 -> pure (dest, instr ++
+                         doAccess ++
+                         structOffset ++
+                         [Inst OP_ADD dest source access, -- Calculate address to load.
+                          Inst OP_LB dest "0" dest]) -- Load memory, using lb instead of lw.
+        size -> pure (dest, instr ++
+                            doAccess ++
+                            [Inst OP_MUL dest source $ show $ sizeof varType] ++
+                            structOffset ++
+                            [Inst OP_ADD dest dest access, -- Calculate address to load.
+                             Inst OP_LW dest "0" dest]) -- Load memory
 
 compileExpressionTemp (CBinaryOp op a b) = do
     (aReg, aInstr) <-
@@ -403,9 +442,8 @@ compileExpressionTemp (CPrefix PreDecrement a) = do
     pure (source, instr ++ [Inst OP_SUB source source "1"])
 
 compileExpressionTemp (CPrefix Dereference a) = do
-    reg <- useNextRegister "t" "temp"
     (source, instr) <- compileExpressionTemp a
-    pure (reg, instr ++ [Inst OP_LW reg "0" source])
+    pure (source, instr ++ [Inst OP_LW source "0" source])
 
 compileExpressionTemp (CPrefix PreNot a) = do
     (source, instr) <- compileExpressionTemp a
@@ -426,9 +464,12 @@ compileExpressionTemp (MemberAccess expr (VarRef name)) = do
     (source, instr) <- compileExpressionTemp expr
     n <- getStructOffset expr name
 
-    case last instr of
-        Inst OP_LW a _ b -> pure (source, init instr ++ [Inst OP_LW a (show n) b])
-        _ -> pure (source, instr ++ [Inst OP_LW source (show n) source])
+    if not $ null instr then
+        case last instr of
+            Inst OP_LW a _ b -> pure (source, init instr ++ [Inst OP_LW a (show n) b])
+            _ -> pure (source, instr ++ [Inst OP_LW source (show n) source])
+    else
+        pure (source, instr ++ [Inst OP_LW source (show n) source])
 
 -- t0 is just a dummy register because we should never use the value that comes from calling printf.
 compileExpressionTemp (FuncCall "printf" args) = ("t0",) <$> compilePrintf args
