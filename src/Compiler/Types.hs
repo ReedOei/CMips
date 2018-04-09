@@ -89,6 +89,9 @@ freeRegister name = do
     else
         pure ()
 
+isRegType :: String -> String -> Bool
+isRegType rtype reg = rtype `isPrefixOf` reg && all (`elem` "1234567890") (drop (length rtype) reg)
+
 generateArgs :: [Var] -> State Environment [MIPSInstruction]
 generateArgs [] = pure []
 generateArgs (Var _ varName:args) = do
@@ -112,6 +115,11 @@ getRegister varName = do
     Environment _ _ _ (Local _ registers _) <- get
     pure $ fromMaybe (error ("Undefined reference to: " ++ varName ++ " (" ++ show registers ++ ")")) $
               lookup varName $ map (\(a, b) -> (b, a)) $ Map.assocs registers
+
+onStack :: String -> State Environment Bool
+onStack name = do
+    Environment _ _ _ (Local _ _ stackLocs) <- get
+    pure $ isJust $ Map.lookup name stackLocs
 
 getStackLoc :: String -> State Environment String
 getStackLoc name = do
@@ -171,9 +179,9 @@ getCurFunc = do
     Environment _ _ (Global _ _ curFunc) _ <- get
     pure curFunc
 
-stalloc :: Int -> State Environment Int
-stalloc amount = do
+stalloc :: String -> Int -> State Environment Int
+stalloc name amount = do
     Environment file d global (Local stack registers stackLocs) <- get
-    put $ Environment file d global (Local (stack + amount) registers stackLocs)
+    put $ Environment file d global (Local (stack + amount) registers (Map.insert name (show stack) stackLocs))
     pure stack
 

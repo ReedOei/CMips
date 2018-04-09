@@ -69,16 +69,14 @@ compileElement (FuncDef t funcName args statements) =
         finalInstr <- optimize body
         -- let finalInstr = body
         --
-        let usedSRegs = nub $ filter ("s" `isPrefixOf`) $ concatMap getOperands finalInstr
+        let usedSRegs = nub $ filter (isRegType "s") $ concatMap getOperands finalInstr
         let saveRegs =
                 case find isJAL body of
                     -- We only need to save the return address if there's a jal in the body.
                     Nothing -> usedSRegs
                     Just _ -> "ra" : usedSRegs
 
-        reserved <- stalloc 0 -- Requesting 0 more bytes will give us the top
-        modify $ purgeRegTypeEnv "result_save"
-        modify $ purgeRegTypeEnv "result_temp"
+        reserved <- stalloc "" 0 -- Requesting 0 more bytes will give us the top
         modify $ purgeRegTypeEnv "s"
         modify $ purgeRegTypeEnv "t"
         pure $ Label label : saveStack reserved saveRegs ++ [Empty] ++ finalInstr ++ [Empty, Label funcEnd] ++ restoreStack reserved saveRegs ++ freeMemory ++ [Inst OP_JR "ra" "" ""]
@@ -277,7 +275,15 @@ getVarRefs (CBinaryOp _ a b) = getVarRefs a ++ getVarRefs b
 getVarRefs _ = []
 
 getReg :: String -> State Environment String
-getReg r = useNextRegister "result_save" r
+getReg r
+    | isRegType "result_temp" r = do
+        exists <- registerNameExists r
+
+        if exists then
+            getRegister r
+        else
+            useNextRegister "result_save" r
+    | otherwise = pure r
 
 useStack :: MIPSInstruction -> State Environment MIPSInstruction
 useStack (Inst op a b c) = Inst op <$> getReg a <*> getReg b <*> getReg c
@@ -368,15 +374,7 @@ compileExpressionTemp (CArrayAccess accessExpr expr) = do
                              Inst OP_LW dest "0" dest]) -- Load memory
 
 compileExpressionTemp (CBinaryOp op a b) = do
-    (aReg, aInstr) <-
-        case b of
-            FuncCall{} -> do -- If it's a func call, make sure we save the aReg to a shared reg instead of a temp.
-                (tempReg, instr) <- compileExpressionTemp a
-                savedReg <- useNextRegister "result_save" "temp_for_func_call"
-
-                pure (savedReg, instr ++ [Inst OP_MOVE savedReg tempReg ""])
-            _ -> compileExpressionTemp a
-
+    (aReg, aInstr) <- compileExpressionTemp a
     (bReg, bInstr) <- compileExpressionTemp b
     reg <- useNextRegister "result_temp" "temp"
 
@@ -401,7 +399,8 @@ compileExpressionTemp (CPrefix PreDecrement a) = do
 
 compileExpressionTemp (CPrefix Dereference a) = do
     (source, instr) <- compileExpressionTemp a
-    pure (source, instr ++ [Inst OP_LW source "0" source])
+    dest <- useNextRegister "result_temp" $ "temp_deref_" ++ show a
+    pure (dest, instr ++ [Inst OP_LW dest "0" source])
 
 compileExpressionTemp (CPrefix PreNot a) = do
     (source, instr) <- compileExpressionTemp a
@@ -424,10 +423,13 @@ compileExpressionTemp (MemberAccess expr (VarRef name)) = do
 
     if not $ null instr then
         case last instr of
-            Inst OP_LW a _ b -> pure (source, init instr ++ [Inst OP_LW a (show n) b])
-            _ -> pure (source, instr ++ [Inst OP_LW source (show n) source])
-    else
-        pure (source, instr ++ [Inst OP_LW source (show n) source])
+            Inst OP_LW a _ b -> pure (a, init instr ++ [Inst OP_LW a (show n) b])
+            _ -> do
+                dest <- useNextRegister "result_temp" $ "access_" ++ name
+                pure (dest, instr ++ [Inst OP_LW dest (show n) source])
+    else do
+        dest <- useNextRegister "result_temp" $ "access_" ++ name
+        pure (dest, instr ++ [Inst OP_LW dest (show n) source])
 
 -- t0 is just a dummy register because we should never use the value that comes from calling printf.
 compileExpressionTemp (FuncCall "printf" args) = ("t0",) <$> compilePrintf args
