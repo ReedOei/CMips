@@ -121,3 +121,10 @@ getOperands :: MIPSInstruction -> [String]
 getOperands (Inst _ a b c) = [a,b,c]
 getOperands _ = []
 
+replaceOperand :: MIPSInstruction -> String -> String -> MIPSInstruction
+replaceOperand (Inst op a b c) search rep
+    | a == search = Inst op rep b c
+    | b == search = Inst op a rep c
+    | c == search = Inst op a b rep
+replaceOperand i _ _ = i
+

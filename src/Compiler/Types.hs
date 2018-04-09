@@ -68,25 +68,34 @@ useNextRegister rtype str = do
     -- Note: This is guaranteed to succeed because we're searching through an infinite list.
     -- That being said, the register might not always be valid, but that's another problem.
     case find ((`Map.notMember` registers) . (rtype ++) . show) [0..] of
-        Just regNum ->
-            if (rtype == "s" && regNum <= 7) || (rtype == "t" && regNum <= 9) || rtype == "result_stack" then do
-                if rtype == "result_stack" then do
-                    offset <- stalloc 4
-                    Environment _ _ _ (Local newStack _ _) <- get
-                    put $ Environment file d global $ Local newStack (Map.insert (rtype ++ show regNum) str registers) (Map.insert (rtype ++ show regNum) (show offset) stackLocs)
-                else
-                    put $ Environment file d global $ Local stack (Map.insert (rtype ++ show regNum) str registers) stackLocs
-                pure $ rtype ++ show regNum
-            else
-                -- We're out of registers :(. Time to start storing stuff on the stack.
-                useNextRegister "result_stack" str
+        Just regNum -> do
+                -- if rtype == "result_save" then do
+                --     offset <- stalloc 4
+                --     Environment _ _ _ (Local newStack _ _) <- get
+                --     put $ Environment file d global $ Local newStack (Map.insert (rtype ++ show regNum) str registers) (Map.insert (rtype ++ show regNum) (show offset) stackLocs)
+                -- else
+            put $ Environment file d global $ Local stack (Map.insert (rtype ++ show regNum) str registers) stackLocs
+            pure $ rtype ++ show regNum
+
+freeRegister :: String -> State Environment ()
+freeRegister name = do
+    exists <- registerNameExists name
+
+    if exists then do
+        regName <- getRegister name
+
+        Environment file d global local@(Local stack registers stackLocs) <- get
+        put $ Environment file d global $ Local stack (Map.delete regName registers) (Map.delete regName stackLocs)
+    else
+        pure ()
 
 generateArgs :: [Var] -> State Environment [MIPSInstruction]
 generateArgs [] = pure []
 generateArgs (Var _ varName:args) = do
-    reg <- useNextRegister "s" varName -- Use the s registers to store in case of function calls that would override.
+    reg <- useNextRegister "result_save" varName -- Use a saved register to store in case of function calls that would override.
+    aReg <- useNextRegister "a" $ varName ++ "arg"
     instr <- generateArgs args
-    pure $ Inst OP_MOVE reg ("a" ++ tail reg) "" : instr
+    pure $ Inst OP_MOVE reg aReg "" : instr
 
 getRegsOfType :: String -> State Environment [String]
 getRegsOfType rType = do
@@ -101,7 +110,7 @@ registerNameExists regName = do
 getRegister :: String -> State Environment String
 getRegister varName = do
     Environment _ _ _ (Local _ registers _) <- get
-    pure $ fromMaybe (error ("Undefined reference to: " ++ varName)) $
+    pure $ fromMaybe (error ("Undefined reference to: " ++ varName ++ " (" ++ show registers ++ ")")) $
               lookup varName $ map (\(a, b) -> (b, a)) $ Map.assocs registers
 
 getStackLoc :: String -> State Environment String
