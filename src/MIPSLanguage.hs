@@ -1,5 +1,7 @@
 module MIPSLanguage where
 
+import Data.Bits
+
 import CLanguage
 
 data MIPSFile = MIPSFile String [MIPSSection] [[MIPSInstruction]] -- Each list contains one function def.
@@ -12,7 +14,7 @@ data MIPSInstruction = Inst MIPSOp String String String
                      | Label String
                      | Comment String
                      | Empty
-    deriving Show
+    deriving (Eq, Show)
 
 data MIPSOp = OP_ADD
             | OP_MOVE
@@ -109,9 +111,10 @@ getBranchOp CGT = OP_BGT
 getBranchOp CGTE = OP_BGE
 getBranchOp CNE = OP_BNE
 
-isJAL (Inst OP_JAL _ _ _) = True
-isJAL (Inst OP_JALR _ _ _) = True
-isJAL _ = False
+isCall (Inst OP_JAL _ _ _) = True
+isCall (Inst OP_JALR _ _ _) = True
+isCall (Inst SYSCALL _ _ _) = True
+isCall _ = False
 
 hasOperand :: (String -> Bool) -> MIPSInstruction -> Bool
 hasOperand f (Inst _ a b c) = f a || f b || f c
@@ -121,10 +124,86 @@ getOperands :: MIPSInstruction -> [String]
 getOperands (Inst _ a b c) = [a,b,c]
 getOperands _ = []
 
-replaceOperand :: MIPSInstruction -> String -> String -> MIPSInstruction
-replaceOperand (Inst op a b c) search rep
-    | a == search = Inst op rep b c
-    | b == search = Inst op a rep c
-    | c == search = Inst op a b rep
-replaceOperand i _ _ = i
+setOperands :: MIPSInstruction -> [String] -> MIPSInstruction
+setOperands (Inst op _ _ _) [a,b,c] = Inst op a b c
+setOperands i _ = i
+
+replaceOperand :: String -> String -> MIPSInstruction -> MIPSInstruction
+replaceOperand search rep instr = setOperands instr $ map (\a -> if a == search then rep else a) $ getOperands instr
+
+branchTarget :: MIPSInstruction -> Maybe String
+branchTarget (Inst OP_J target _ _) = Just target
+branchTarget (Inst OP_JAL target _ _) = Just target
+branchTarget (Inst OP_BNE _ _ target) = Just target
+branchTarget (Inst OP_BEQ _ _ target) = Just target
+branchTarget (Inst OP_BGT _ _ target) = Just target
+branchTarget (Inst OP_BGE _ _ target) = Just target
+branchTarget (Inst OP_BLT _ _ target) = Just target
+branchTarget (Inst OP_BLE _ _ target) = Just target
+branchTarget _ = Nothing
+
+isArith :: MIPSInstruction -> Bool
+isArith (Inst OP_ADD _ _ _) = True
+isArith (Inst OP_MUL _ _ _) = True
+isArith (Inst OP_XOR _ _ _) = True
+isArith (Inst OP_DIV _ _ _) = True
+isArith (Inst OP_SUB _ _ _) = True
+isArith (Inst OP_AND _ _ _) = True
+isArith (Inst OP_OR _ _ _) = True
+isArith _ = False
+
+compute :: MIPSOp -> Integer -> Integer -> Integer
+compute OP_ADD = (+)
+compute OP_MUL = (*)
+compute OP_XOR = xor
+compute OP_DIV = div
+compute OP_SUB = (-)
+compute OP_AND = (.&.)
+compute OP_OR = (.|.)
+
+instResult :: MIPSInstruction -> Maybe String
+instResult (Inst OP_ADD a _ _) = Just a
+instResult (Inst OP_MOVE a _ _) = Just a
+instResult (Inst OP_MUL a _ _) = Just a
+instResult (Inst OP_LW a _ _) = Just a
+instResult (Inst OP_LB a _ _) = Just a
+instResult (Inst OP_XOR a _ _) = Just a
+instResult (Inst OP_DIV a _ _) = Just a
+instResult (Inst OP_SUB a _ _) = Just a
+instResult (Inst OP_AND a _ _) = Just a
+instResult (Inst OP_OR a _ _) = Just a
+instResult (Inst OP_SLL a _ _) = Just a
+instResult (Inst OP_SRL a _ _) = Just a
+instResult (Inst OP_REM a _ _) = Just a
+instResult (Inst OP_NOT a _ _) = Just a
+instResult (Inst OP_LI a _ _) = Just a
+instResult (Inst OP_LA a _ _) = Just a
+instResult _ = Nothing
+
+instUses :: MIPSInstruction -> [String]
+instUses (Inst OP_MOVE _ b _) = [b]
+instUses (Inst OP_ADD _ b c) = [b,c]
+instUses (Inst OP_MUL _ b c) = [b,c]
+instUses (Inst OP_LW a _ c) = [c]
+instUses (Inst OP_SW a _ c) = [a,c]
+instUses (Inst OP_LB a _ c) = [c]
+instUses (Inst OP_SB a _ c) = [a,c]
+instUses (Inst OP_XOR _ b c) = [b,c]
+instUses (Inst OP_DIV _ b c) = [b,c]
+instUses (Inst OP_SUB _ b c) = [b,c]
+instUses (Inst OP_AND _ b c) = [b,c]
+instUses (Inst OP_OR _ b c) = [b,c]
+instUses (Inst OP_BNE a b _) = [a,b]
+instUses (Inst OP_BEQ a b _) = [a,b]
+instUses (Inst OP_BGT a b _) = [a,b]
+instUses (Inst OP_BGE a b _) = [a,b]
+instUses (Inst OP_BLT a b _) = [a,b]
+instUses (Inst OP_BLE a b _) = [a,b]
+instUses (Inst OP_JR a _ _) = [a]
+instUses (Inst OP_JALR a _ _) = [a]
+instUses (Inst OP_SLL _ b c) = [b,c]
+instUses (Inst OP_SRL _ b c) = [b,c]
+instUses (Inst OP_REM _ b c) = [b,c]
+instUses (Inst OP_NOT _ b _) = [b]
+instUses _ = []
 

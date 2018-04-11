@@ -116,6 +116,12 @@ getRegister varName = do
     pure $ fromMaybe (error ("Undefined reference to: " ++ varName ++ " (" ++ show registers ++ ")")) $
               lookup varName $ map (\(a, b) -> (b, a)) $ Map.assocs registers
 
+getRegRef :: String -> State Environment String
+getRegRef regName = do
+    Environment _ _ _ (Local _ registers _) <- get
+    pure $ fromMaybe (error ("Undefined reference to " ++ regName ++ " (" ++ show registers ++ ")")) $
+            Map.lookup regName registers
+
 onStack :: String -> State Environment Bool
 onStack name = do
     Environment _ _ _ (Local _ _ stackLocs) <- get

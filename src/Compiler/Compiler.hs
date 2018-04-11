@@ -44,10 +44,12 @@ generateDataSection sectionName elements =
     MIPSSection sectionName $ map (\(DataElement name dataType value) -> (name, dataType, value)) elements
 
 saveStack :: Int -> [String] -> [MIPSInstruction]
-saveStack reserved registers = Inst OP_SUB "sp" "sp" (show (reserved + 4 * length registers)) : saveInstr
+saveStack _ [] = []
+saveStack reserved registers = Inst OP_SUB "sp" "sp" (show (reserved + 4 * length registers)) : saveInstr ++ [Empty]
     where saveInstr = map (\(i, r) -> Inst OP_SW r (show (reserved + i * 4)) "sp") $ zip [0..] registers
 
 restoreStack :: Int -> [String] -> [MIPSInstruction]
+restoreStack _ [] = []
 restoreStack reserved registers = restoreInstr ++ [Inst OP_ADD "sp" "sp" (show (reserved + 4 * length registers))]
     where restoreInstr = map (\(i, r) -> Inst OP_LW r (show (reserved + i * 4)) "sp") $ zip [0..] registers
 
@@ -64,14 +66,14 @@ compileElement (FuncDef t funcName args statements) =
 
         instr <- compileStatements statements
 
-        let body = argInstr ++ instr
+        let body = argInstr ++ instr ++ [Empty, Label funcEnd]
 
         finalInstr <- optimize body
         -- let finalInstr = body
         --
         let usedSRegs = nub $ filter (isRegType "s") $ concatMap getOperands finalInstr
         let saveRegs =
-                case find isJAL body of
+                case find isCall body of
                     -- We only need to save the return address if there's a jal in the body.
                     Nothing -> usedSRegs
                     Just _ -> "ra" : usedSRegs
@@ -79,7 +81,7 @@ compileElement (FuncDef t funcName args statements) =
         reserved <- stalloc "" 0 -- Requesting 0 more bytes will give us the top
         modify $ purgeRegTypeEnv "s"
         modify $ purgeRegTypeEnv "t"
-        pure $ Label label : saveStack reserved saveRegs ++ [Empty] ++ finalInstr ++ [Empty, Label funcEnd] ++ restoreStack reserved saveRegs ++ freeMemory ++ [Inst OP_JR "ra" "" ""]
+        pure $ Label label : saveStack reserved saveRegs ++ finalInstr ++ restoreStack reserved saveRegs ++ freeMemory ++ [Inst OP_JR "ra" "" ""]
     where
         freeMemory =
             case funcName of
@@ -318,6 +320,8 @@ compileExpressionTemp (VarRef varName) = do
 
         Nothing -> (,[]) <$> getRegister varName
 
+-- Special case for 0 because $0 always contains 0 -- this can save us an OP_LI
+compileExpressionTemp (LitInt 0) = pure ("0", [])
 compileExpressionTemp (LitInt i) = do
     reg <- useNextRegister "result_temp" $ show i
     pure (reg, [Inst OP_LI reg (show i) ""])
