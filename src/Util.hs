@@ -27,8 +27,3 @@ noChange compM newM = do
     new <- newM
     pure $ comp == new
 
-maybeToEither :: Maybe a -> Maybe b -> Maybe (Either a b)
-maybeToEither (Just a) _ = Just (Left a)
-maybeToEither _ (Just b) = Just (Right b)
-maybeToEither _ _ = Nothing
-

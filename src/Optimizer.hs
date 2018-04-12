@@ -15,9 +15,9 @@ import System.IO.Unsafe
 
 optimize :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimize = findTemp [] >=>
-           (untilM noChange (optimizeArith [] >=> optimizeResults >=> optimizeJumps) . pure) >=>
-           allocateRegisters >=>
-           handleResSave
+           (untilM noChange (optimizeArith [] >=> optimizeResults >=> optimizeJumps) . pure)
+           -- allocateRegisters >=>
+           -- handleResSave
 
 optimizeArith :: [MIPSInstruction] -> [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeArith _ [] = pure []
@@ -106,7 +106,15 @@ getNext = find go
         go _ = False
 
 optimizeResults :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-optimizeResults = optimizeUnused [] >=> optimizeArgTemp
+optimizeResults = optimizeUnused [] >=> optimizeArgTemp >=> optimizeIdMove
+
+optimizeIdMove :: [MIPSInstruction] -> State Environment [MIPSInstruction]
+optimizeIdMove [] = pure []
+optimizeIdMove (instr:instrs) =
+    case instr of
+        -- If we move a to itself, then what is the point.
+        Inst OP_MOVE a b _ | a == b -> optimizeIdMove instrs
+        _ -> (:) <$> pure instr <*> optimizeIdMove instrs
 
 -- If we move an arg into a temp variable, we might as well just use the arg itself.
 optimizeArgTemp :: [MIPSInstruction] -> State Environment [MIPSInstruction]
