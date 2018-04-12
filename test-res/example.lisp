@@ -38,10 +38,6 @@
      (printmain xs)
      (printf "]"))
 
-(def (id x) x)
-
 (def (main)
-     (printlist (append 1 '()))
-     (printlist '(1 2 3))
      (printlist (filter prime (build 1 100))))
 

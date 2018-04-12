@@ -15,9 +15,9 @@ import System.IO.Unsafe
 
 optimize :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimize = findTemp [] >=>
-           (untilM noChange (optimizeArith [] >=> optimizeResults >=> optimizeJumps) . pure)
-           -- allocateRegisters >=>
-           -- handleResSave
+           (untilM noChange (optimizeArith [] >=> optimizeResults >=> optimizeJumps) . pure) >=>
+           allocateRegisters >=>
+           handleResSave
 
 optimizeArith :: [MIPSInstruction] -> [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeArith _ [] = pure []
@@ -26,16 +26,20 @@ optimizeArith prev (instr:instrs) = do
             if isArith instr then
                 -- Don't need to check any more cases, because all arith will be instructions
                 case instr of
+                    -- If we modify ourselves, we'll assume that we're not constant (for things like i++ in a loop),
+                    -- even though it is possible that we are.
+                    Inst op a b c | a == b || a == c -> instr
+
                     -- Only c can be an immediate, for most things
-                    -- Inst op a b c | commutes op ->
-                    --     let cConst = resolveConstant prev c
-                    --         bConst = resolveConstant prev b in
-                    --         case (resolveConstant prev b, resolveConstant prev c) of
-                    --             (Just bVal, Just cVal) -> Inst OP_LI a (show (compute op (read bVal) (read cVal))) ""
-                    --             -- Transform "op a b c" into "op a c bVal", which is valid because op commutes.
-                    --             (Just bVal, Nothing) -> replaceOperand b c (replaceOperand c bVal instr)
-                    --             (Nothing, Just cVal) -> replaceOperand c cVal instr
-                    --             _ -> instr
+                    Inst op a b c | commutes op ->
+                        let cConst = resolveConstant prev c
+                            bConst = resolveConstant prev b in
+                            case (resolveConstant prev b, resolveConstant prev c) of
+                                (Just bVal, Just cVal) -> Inst OP_LI a (show (compute op (read bVal) (read cVal))) ""
+                                -- Transform "op a b c" into "op a c bVal", which is valid because op commutes.
+                                (Just bVal, Nothing) -> replaceOperand b c (replaceOperand c bVal instr)
+                                (Nothing, Just cVal) -> replaceOperand c cVal instr
+                                _ -> instr
 
                     Inst op a b c -> replaceOperand c (fromMaybe c (resolveConstant prev c)) instr
             else
