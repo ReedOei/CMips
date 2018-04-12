@@ -21,21 +21,33 @@ optimize = findTemp [] >=>
 
 optimizeArith :: [MIPSInstruction] -> [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeArith _ [] = pure []
-optimizeArith prev (instr:instrs)
-    | isArith instr =
-        -- Don't need to check any more cases, because all arith will be instructions
-        case instr of
-            -- Only c can be an immediate
-            Inst op a b c ->
-                let newInstr = replaceOperand c (fromMaybe c (resolveConstant prev c)) instr in
-                    (:) <$> pure newInstr <*> optimizeArith (prev ++ [instr]) instrs
-    | otherwise =
-        case instr of
-            Inst OP_MOVE a b c ->
-                case resolveConstant prev b of
-                    Nothing -> (:) <$> pure instr <*> optimizeArith (prev ++ [instr]) instrs
-                    Just val -> (:) <$> pure (Inst OP_LI a val "") <*> optimizeArith (prev ++ [instr]) instrs
-            _ -> (:) <$> pure instr <*> optimizeArith (prev ++ [instr]) instrs
+optimizeArith prev (instr:instrs) = do
+    let newInstr =
+            if isArith instr then
+                -- Don't need to check any more cases, because all arith will be instructions
+                case instr of
+                    -- Only c can be an immediate, for most things
+                    -- Inst op a b c | commutes op ->
+                    --     let cConst = resolveConstant prev c
+                    --         bConst = resolveConstant prev b in
+                    --         case (resolveConstant prev b, resolveConstant prev c) of
+                    --             (Just bVal, Just cVal) -> Inst OP_LI a (show (compute op (read bVal) (read cVal))) ""
+                    --             -- Transform "op a b c" into "op a c bVal", which is valid because op commutes.
+                    --             (Just bVal, Nothing) -> replaceOperand b c (replaceOperand c bVal instr)
+                    --             (Nothing, Just cVal) -> replaceOperand c cVal instr
+                    --             _ -> instr
+
+                    Inst op a b c -> replaceOperand c (fromMaybe c (resolveConstant prev c)) instr
+            else
+                case instr of
+                    -- Moving a constant into a variable is also pointless.
+                    Inst OP_MOVE a b c ->
+                        case resolveConstant prev b of
+                            Nothing -> instr
+                            Just val -> Inst OP_LI a val ""
+                    _ -> instr
+
+    (:) <$> pure newInstr <*> optimizeArith (prev ++ [instr]) instrs
 
 -- Finds out if a register is a constant.
 -- If it is, replaces the register reference with the constant, if it is allowed in this position.
@@ -94,7 +106,16 @@ getNext = find go
         go _ = False
 
 optimizeResults :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-optimizeResults = optimizeUnused []
+optimizeResults = optimizeUnused [] >=> optimizeArgTemp
+
+-- If we move an arg into a temp variable, we might as well just use the arg itself.
+optimizeArgTemp :: [MIPSInstruction] -> State Environment [MIPSInstruction]
+optimizeArgTemp [] = pure []
+optimizeArgTemp (instr:instrs) =
+    case instr of
+        Inst OP_MOVE a b c | isRegType "a" b && isRegType "result_temp" a ->
+            optimizeArgTemp $ map (replaceOperand a b) instrs
+        _ -> (:) <$> pure instr <*> optimizeArgTemp instrs
 
 -- Keep track of previous instructions because jumps may make it so that we execute stuff before the
 -- instruction that is currently being processed.

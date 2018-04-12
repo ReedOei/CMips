@@ -152,6 +152,13 @@ isArith (Inst OP_AND _ _ _) = True
 isArith (Inst OP_OR _ _ _) = True
 isArith _ = False
 
+commutes OP_MUL = True
+commutes OP_ADD = True
+commutes OP_AND = True
+commutes OP_OR = True
+commutes OP_XOR = True
+commutes _ = False
+
 compute :: MIPSOp -> Integer -> Integer -> Integer
 compute OP_ADD = (+)
 compute OP_MUL = (*)

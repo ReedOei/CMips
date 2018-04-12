@@ -4,7 +4,7 @@ int g(int x) {
 
 int f(int x) {
     int y = 40;
-    int z = y + 50;
+    int z = 40 + y;
 
     if (x == 1) {
         x += z;
@@ -15,5 +15,13 @@ int f(int x) {
 
 int h(int x) {
     return (x % 2) == 0;
+}
+
+int f2(int x) {
+    return 40 + x;
+}
+
+int f3(int x) {
+    return 40 - 40;
 }
 

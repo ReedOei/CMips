@@ -451,7 +451,6 @@ compileExpressionTemp (FuncCall funcName args) = do
     let argLoading = map (\(i, r) -> Inst OP_MOVE ("a" ++ show i) r "") $ zip [0..] regs
 
     res <- getFuncLabel funcName
-    retVal <- useNextRegister "result_temp" "func_call_return_val"
 
     jumpOp <- case res of
                     -- If we don't find it, see if we have a function pointer for it.
@@ -459,9 +458,7 @@ compileExpressionTemp (FuncCall funcName args) = do
                         r <- getRegister funcName
                         pure $ Inst OP_JALR r "" ""
                     Just (label, _) -> pure $ Inst OP_JAL label "" ""
-    pure (retVal,
-             instr ++ argLoading ++ [jumpOp] ++
-             [Inst OP_MOVE retVal "v0" ""]) -- Make sure to save func call result.
+    pure ("v0", instr ++ argLoading ++ [jumpOp])
 
 compileSizeof :: CExpression -> State Environment (String, [MIPSInstruction])
 compileSizeof expr = do
