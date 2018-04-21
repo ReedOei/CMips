@@ -40,8 +40,8 @@ cElement = try preprocessorParser <|>
 
 inlineParser :: CharParser st CElement
 inlineParser = do
-    string "inline"
-    newlines
+    string "mips"
+    optional newlines
 
     returnType <- typeParser
     wsSkip

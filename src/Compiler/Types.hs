@@ -113,13 +113,13 @@ registerNameExists regName = do
 getRegister :: String -> State Environment String
 getRegister varName = do
     Environment _ _ _ (Local _ registers _) <- get
-    pure $ fromMaybe (error ("Undefined reference to: " ++ varName ++ " (" ++ show registers ++ ")")) $
+    pure $ fromMaybe (error ("Undefined reference to register: " ++ varName ++ " (" ++ show registers ++ ")")) $
               lookup varName $ map (\(a, b) -> (b, a)) $ Map.assocs registers
 
 getRegRef :: String -> State Environment String
 getRegRef regName = do
     Environment _ _ _ (Local _ registers _) <- get
-    pure $ fromMaybe (error ("Undefined reference to " ++ regName ++ " (" ++ show registers ++ ")")) $
+    pure $ fromMaybe (error ("Undefined reference to register name: " ++ regName ++ " (" ++ show registers ++ ")")) $
             Map.lookup regName registers
 
 onStack :: String -> State Environment Bool
@@ -130,7 +130,7 @@ onStack name = do
 getStackLoc :: String -> State Environment String
 getStackLoc name = do
     Environment _ _ _ (Local _ _ stackLocs) <- get
-    pure $ fromMaybe (error ("Undefined reference to: " ++ name)) $
+    pure $ fromMaybe (error ("Undefined reference to stack location: " ++ name)) $
             Map.lookup name stackLocs
 
 getNextLabel :: String -> State Environment String

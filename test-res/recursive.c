@@ -18,3 +18,7 @@ int f(int x) {
     return mySum(0, x) + fib(x);
 }
 
+int main() {
+    printf("%d", mySum(1, 4));
+}
+

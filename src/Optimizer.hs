@@ -16,10 +16,20 @@ import System.IO.Unsafe
 optimize :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimize = findTemp [] >=>
            (untilM noChange (optimizeArith [] >=>
-                            optimizeResults >=>
-                            optimizeJumps) . pure) >=>
+                             optimizeResults >=>
+                             optimizeJumps) . pure) >=>
            allocateRegisters >=>
            handleResSave
+
+temp :: [MIPSInstruction] -> State Environment [MIPSInstruction]
+temp instrs = do
+    Environment _ _ _ (Local _ registers _) <- get
+    unsafePerformIO $ do
+        print registers
+
+        pure $ modify id
+
+    pure instrs
 
 optimizeArith :: [MIPSInstruction] -> [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeArith _ [] = pure []
@@ -168,7 +178,7 @@ findTemp examined (instr:instrs) = do
     (:) <$> pure newInstr <*> findTemp (getOperands instr ++ examined) newInstrs
     where
         go instr a
-            -- No JALs here, so safe to just use temp for this.
+            -- No JALs or JALRs here, so safe to just use temp for this.
             | isNothing (find isCall (scope a instrs)) && "result_save" `isPrefixOf` a = do
                 ref <- getRegRef a
                 newReg <- useNextRegister "result_temp" ref

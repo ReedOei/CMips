@@ -12,7 +12,7 @@ int sum(List *list) {
         return 0;
     }
 
-    return *list->value + sum(list->tail);
+    return list->value + sum(list->tail);
 }
 
 List* map(void (*f)(void), List *list) {
@@ -20,7 +20,7 @@ List* map(void (*f)(void), List *list) {
         return NULL;
     }
 
-    *list->value = f(*list->value);
+    list->value = f(list->value);
     list->tail = map(f, list->tail);
 
     return list;
@@ -28,14 +28,12 @@ List* map(void (*f)(void), List *list) {
 
 int main() {
     List *list = malloc(8);
-    list->value = malloc(4);
-    *list->value = 0;
+    list->value = 0;
 
     List *cur = list;
-    for (int i = i; i < 10; i++) {
+    for (int i = 0; i < 10; i++) {
         List *next = malloc(8);
-        next->value = malloc(4);
-        *next->value = i;
+        next->value = i;
         cur->tail = next;
         cur = next;
     }

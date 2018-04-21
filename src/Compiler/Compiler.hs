@@ -71,6 +71,7 @@ compileElement (FuncDef t funcName args statements) =
         finalInstr <- optimize body
         -- let finalInstr = body
         --
+
         let usedSRegs = nub $ filter (isRegType "s") $ concatMap getOperands finalInstr
         let saveRegs =
                 case find isCall body of
@@ -236,10 +237,10 @@ compileStatement st@(Assign assignKind lhs rhs) = do
             if not $ null instr then
                 case last instr of
                     Inst OP_LW target offset loadSource -> do
-                        tempReg <- useNextRegister "result_temp" "temp_load"
+                        tempReg <- useNextRegister "result_save" "temp_load"
                         pure (tempReg, init instr, assignOp tempReg target ++ [Inst OP_SW tempReg offset loadSource])
                     Inst OP_LB target offset loadSource -> do
-                        tempReg <- useNextRegister "result_temp" "temp_load"
+                        tempReg <- useNextRegister "result_save" "temp_load"
                         pure (tempReg, init instr, assignOp tempReg target ++ [Inst OP_SB tempReg offset loadSource])
                     inst -> error $ "Unexpected instruction for assign expression: " ++ show st ++ " " ++ show inst
             else
@@ -284,7 +285,7 @@ getReg r
         if exists then
             getRegister r
         else
-            useNextRegister "result_save" r
+            useNextRegister "result_save" $ "save_" ++ r
     | otherwise = pure r
 
 useStack :: MIPSInstruction -> State Environment MIPSInstruction
@@ -314,7 +315,7 @@ compileExpressionTemp (VarRef varName) = do
 
     case fInfo of
         Just (funcLabel, _) -> do
-            reg <- useNextRegister "result_temp" $ varName ++ "_" ++ funcLabel
+            reg <- useNextRegister "result_save" $ varName ++ "_" ++ funcLabel
 
             pure (reg, [Inst OP_LA reg funcLabel ""])
 
@@ -323,16 +324,16 @@ compileExpressionTemp (VarRef varName) = do
 -- Special case for 0 because $0 always contains 0 -- this can save us an OP_LI
 compileExpressionTemp (LitInt 0) = pure ("0", [])
 compileExpressionTemp (LitInt i) = do
-    reg <- useNextRegister "result_temp" $ show i
+    reg <- useNextRegister "result_save" $ show i
     pure (reg, [Inst OP_LI reg (show i) ""])
 
 compileExpressionTemp (LitChar c) = do
-    reg <- useNextRegister "result_temp" $ show $ ord c
+    reg <- useNextRegister "result_save" $ show $ ord c
     pure (reg, [Inst OP_LI reg (show (ord c)) ""])
 
 compileExpressionTemp (LitString s) = do
     name <- saveStr s
-    reg <- useNextRegister "result_temp" name
+    reg <- useNextRegister "result_save" name
     pure (reg, [Inst OP_LA reg name ""])
 
 compileExpressionTemp NULL =  pure ("0", [])
@@ -341,7 +342,7 @@ compileExpressionTemp (CArrayAccess accessExpr expr) = do
     (source, instr) <- compileExpressionTemp expr
     (access, accessInstr) <- compileExpressionTemp accessExpr
 
-    dest <- useNextRegister "result_temp" $ readableExpr accessExpr ++ "_access"
+    dest <- useNextRegister "result_save" $ readableExpr accessExpr ++ "_access"
     varType <- resolveType (CPrefix Dereference accessExpr) >>= elaborateType
 
     doAccess <- case accessExpr of
@@ -380,7 +381,7 @@ compileExpressionTemp (CArrayAccess accessExpr expr) = do
 compileExpressionTemp (CBinaryOp op a b) = do
     (aReg, aInstr) <- compileExpressionTemp a
     (bReg, bInstr) <- compileExpressionTemp b
-    reg <- useNextRegister "result_temp" "temp"
+    reg <- useNextRegister "result_save" "temp"
 
     case op of
         -- In the case of CEQ, we compare for equality via:
@@ -403,13 +404,13 @@ compileExpressionTemp (CPrefix PreDecrement a) = do
 
 compileExpressionTemp (CPrefix Dereference a) = do
     (source, instr) <- compileExpressionTemp a
-    dest <- useNextRegister "result_temp" $ "temp_deref_" ++ show a
+    dest <- useNextRegister "result_save" $ "temp_deref_" ++ show a
     pure (dest, instr ++ [Inst OP_LW dest "0" source])
 
 compileExpressionTemp (CPrefix PreNot a) = do
     (source, instr) <- compileExpressionTemp a
     endNot <- getNextLabel "end_not"
-    reg <- useNextRegister "result_temp" "temp"
+    reg <- useNextRegister "result_save" "temp"
 
     pure (reg, instr ++ [Inst OP_LI reg "1" "", Inst OP_BEQ source "0" endNot, Inst OP_LI reg "0" "", Label endNot])
 
@@ -429,10 +430,10 @@ compileExpressionTemp (MemberAccess expr (VarRef name)) = do
         case last instr of
             Inst OP_LW a _ b -> pure (a, init instr ++ [Inst OP_LW a (show n) b])
             _ -> do
-                dest <- useNextRegister "result_temp" $ "access_" ++ name
+                dest <- useNextRegister "result_save" $ "access_" ++ name
                 pure (dest, instr ++ [Inst OP_LW dest (show n) source])
     else do
-        dest <- useNextRegister "result_temp" $ "access_" ++ name
+        dest <- useNextRegister "result_save" $ "access_" ++ name
         pure (dest, instr ++ [Inst OP_LW dest (show n) source])
 
 -- t0 is just a dummy register because we should never use the value that comes from calling printf.
@@ -451,7 +452,7 @@ compileExpressionTemp (FuncCall funcName args) = do
     let argLoading = map (\(i, r) -> Inst OP_MOVE ("a" ++ show i) r "") $ zip [0..] regs
 
     res <- getFuncLabel funcName
-    retVal <- useNextRegister "result_temp" "func_call_return_val"
+    retVal <- useNextRegister "result_save" "func_call_return_val"
 
     jumpOp <- case res of
                     -- If we don't find it, see if we have a function pointer for it.
@@ -466,7 +467,7 @@ compileExpressionTemp (FuncCall funcName args) = do
 compileSizeof :: CExpression -> State Environment (String, [MIPSInstruction])
 compileSizeof expr = do
     t <- resolveType expr >>= elaborateType
-    reg <- useNextRegister "result_temp" $ "sizeof(" ++ show expr ++ ")"
+    reg <- useNextRegister "result_save" $ "sizeof(" ++ show expr ++ ")"
 
     pure (reg, [Inst OP_LI reg (show (sizeof t)) ""])
 
@@ -501,6 +502,6 @@ compilePrintf (LitString formatStr:args) = do
 
         go (as, curInstr) str = do
             name <- saveStr str
-            reg <- useNextRegister "result_temp" name
+            reg <- useNextRegister "result_save" name
             pure (as, curInstr ++ [Inst OP_LA "a0" name "", Inst OP_LI "v0" "4" "", Inst SYSCALL "" "" ""]) -- 4 is print string
 
