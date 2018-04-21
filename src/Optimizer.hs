@@ -14,8 +14,10 @@ import Util
 import System.IO.Unsafe
 
 optimize :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-optimize = findTemp [] >=>
-           (untilM noChange (optimizeArith [] >=> optimizeResults >=> optimizeJumps) . pure) >=>
+optimize = (untilM noChange (findTemp [] >=>
+                             optimizeArith [] >=>
+                             optimizeResults >=>
+                             optimizeJumps) . pure) >=>
            allocateRegisters >=>
            handleResSave
 
