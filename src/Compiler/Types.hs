@@ -90,7 +90,7 @@ freeRegister name = do
         pure ()
 
 isRegType :: String -> String -> Bool
-isRegType rtype reg = rtype `isPrefixOf` reg && all (`elem` "1234567890") (drop (length rtype) reg)
+isRegType rtype reg = rtype `isPrefixOf` reg && all (`elem` ("1234567890" :: String)) (drop (length rtype) reg)
 
 generateArgs :: [Var] -> State Environment [MIPSInstruction]
 generateArgs [] = pure []

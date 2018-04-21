@@ -14,10 +14,10 @@ import Util
 import System.IO.Unsafe
 
 optimize :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-optimize = (untilM noChange (findTemp [] >=>
-                             optimizeArith [] >=>
-                             optimizeResults >=>
-                             optimizeJumps) . pure) >=>
+optimize = findTemp [] >=>
+           (untilM noChange (optimizeArith [] >=>
+                            optimizeResults >=>
+                            optimizeJumps) . pure) >=>
            allocateRegisters >=>
            handleResSave
 
@@ -216,7 +216,7 @@ allocateRegisters (instr:instrs) = do
 
 outOfRange :: String -> Bool
 outOfRange "" = False
-outOfRange reg@(_:_) = all (`elem` "1234567890") (tail reg)
+outOfRange reg@(_:_) = all (`elem` ("1234567890" :: String)) (tail reg)
                     && (("s" `isPrefixOf` reg && read (tail reg) > 7) ||
                          "t" `isPrefixOf` reg && read (tail reg) > 9)
 
