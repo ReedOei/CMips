@@ -9,7 +9,15 @@ int sum(node_t *node) {
         return 0;
     }
 
-    node->test = *(node->data) + sum(node->next);
-    return node->test;
+    return node->data + sum(node->next);
+}
+
+struct temp_t {
+    int a;
+    int t[4];
+};
+
+int f(temp_t *v, int *xs) {
+    return &(v->t[3]) + &(xs[4]);
 }
 

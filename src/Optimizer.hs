@@ -31,6 +31,9 @@ temp instrs = do
 
     pure instrs
 
+isNum :: String -> Bool
+isNum = all (`elem` ("1234567890" :: String))
+
 optimizeArith :: [MIPSInstruction] -> [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeArith _ [] = pure []
 optimizeArith prev (instr:instrs) = do
@@ -38,11 +41,18 @@ optimizeArith prev (instr:instrs) = do
             if isArith instr then
                 -- Don't need to check any more cases, because all arith will be instructions
                 case instr of
+                    -- Arithmetic identities.
+                    Inst OP_ADD a b "0" -> Inst OP_MOVE a b "" -- x+0 = x
+                    Inst OP_SUB a b "0" -> Inst OP_MOVE a b "" -- x-0 = x
+                    Inst OP_DIV a b "1" -> Inst OP_MOVE a b "" -- x/1 = x
+                    Inst OP_MUL a b "1" -> Inst OP_MOVE a b "" -- 1*x = x
+                    Inst OP_MUL a b "0" -> Inst OP_LI a "0" "" -- 0*x = 0
+
                     -- If we modify ourselves, we'll assume that we're not constant (for things like i++ in a loop),
                     -- even though it is possible that we are.
                     Inst op a b c | a == b || a == c -> instr
 
-                    -- Only c can be an immediate, for most things
+                    -- Only c can be an immediate, for most things, but not if op commutes.
                     Inst op a b c | commutes op ->
                         let cConst = resolveConstant prev c
                             bConst = resolveConstant prev b in
@@ -69,26 +79,28 @@ optimizeArith prev (instr:instrs) = do
 -- If it is, replaces the register reference with the constant, if it is allowed in this position.
 -- Otherwise, returns Nothing
 resolveConstant :: [MIPSInstruction] -> String -> Maybe String
-resolveConstant prev regName =
-    case findIndex (hasOperand (== regName)) $ reverse prev of
-        Just i ->
-            let beforeI = reverse $ drop (i + 1) $ reverse prev
-                hasCall = isJust $ find isCall $ take i $ reverse prev in
-                case reverse prev !! i of
-                    -- If there was a call and this isn't a saved value, then we can't rely on it being constant through the call.
-                    _ | hasCall && not ("result_save" `isPrefixOf` regName)-> Nothing
+resolveConstant prev regName
+    | isNum regName = Just regName
+    | otherwise =
+        case findIndex (hasOperand (== regName)) $ reverse prev of
+            Just i ->
+                let beforeI = reverse $ drop (i + 1) $ reverse prev
+                    hasCall = isJust $ find isCall $ take i $ reverse prev in
+                    case reverse prev !! i of
+                        -- If there was a call and this isn't a saved value, then we can't rely on it being constant through the call.
+                        _ | hasCall && not ("result_save" `isPrefixOf` regName)-> Nothing
 
-                    -- Need to make sure we don't use li multiple times.
-                    Inst OP_LI _ val _ | isNothing (find (hasOperand (== regName)) beforeI) -> Just val
-                    Inst OP_MOVE dest source _ | dest == regName -> resolveConstant beforeI source
-                    Inst op a b c | a == regName ->
-                        -- Make sure both operands are also constants.
-                        case (,) <$> (read <$> resolveConstant beforeI b)
-                                 <*> (read <$> resolveConstant beforeI c) of
-                            Just (bVal, cVal) -> Just $ show $ compute op bVal cVal
-                            _ -> Nothing
-                    _ -> Nothing
-        Nothing -> Nothing
+                        -- Need to make sure we don't use li multiple times.
+                        Inst OP_LI _ val _ | isNothing (find (hasOperand (== regName)) beforeI) -> Just val
+                        Inst OP_MOVE dest source _ | dest == regName -> resolveConstant beforeI source
+                        Inst op a b c | a == regName ->
+                            -- Make sure both operands are also constants.
+                            case (,) <$> (read <$> resolveConstant beforeI b)
+                                     <*> (read <$> resolveConstant beforeI c) of
+                                Just (bVal, cVal) -> Just $ show $ compute op bVal cVal
+                                _ -> Nothing
+                        _ -> Nothing
+            Nothing -> Nothing
 
 optimizeJumps :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeJumps = removeUselessJumps >=> removeUnusedLabels

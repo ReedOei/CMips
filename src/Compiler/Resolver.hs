@@ -116,6 +116,7 @@ elaborateType (NamedType structName) = do
     case findStructDef structName elements of
         Nothing -> pure $ NamedType structName
         Just struct -> pure $ StructType struct
+elaborateType (Type Value t) = elaborateType t
 elaborateType (Type varKind t) = Type varKind <$> elaborateType t
 elaborateType t = pure t
 

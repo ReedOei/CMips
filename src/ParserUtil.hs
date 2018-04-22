@@ -13,7 +13,7 @@ readNum = do
 
 wsSkip :: CharParser st ()
 wsSkip = do
-    many (oneOf " \t")
+    many (oneOf " \r\t")
     pure ()
 
 whitespace :: CharParser st ()

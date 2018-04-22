@@ -343,6 +343,7 @@ forStatementParser = do
 block :: CharParser st [CStatement]
 block = do
     wsSkip
+    optional newlines
     res <- between (char '{') (char '}') innerBlock
     wsSkip
     pure res

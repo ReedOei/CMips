@@ -111,6 +111,8 @@ compileElement (Inline t funcName args statements) = do
 
     pure $ Label label : map (\str -> Inst LIT_ASM str "" "") statements
 
+compileElement (StructDef structName _) = pure [Comment $ "struct " ++ structName]
+
 compileElement _ = pure []
 
 compileStatements :: [CStatement] -> State Environment [MIPSInstruction]
@@ -328,6 +330,12 @@ compileExpression expr = do
         pure (reg, instr)
 
 compileExpressionTemp :: CExpression -> State Environment (String, [MIPSInstruction])
+compileExpressionTemp (VarRef "INT_MIN") = do
+    reg <- useNextRegister "result_save" "INT_MIN_VAL"
+    pure (reg, [Inst OP_LI reg "-2147483648" ""])
+compileExpressionTemp (VarRef "INT_MAX") = do
+    reg <- useNextRegister "result_save" "INT_MAX_VAL"
+    pure (reg, [Inst OP_LI reg "2147483647" ""])
 compileExpressionTemp (VarRef varName) = do
     fInfo <- getFuncLabel varName
 
@@ -368,7 +376,11 @@ compileExpressionTemp (CArrayAccess accessExpr expr) = do
                             t <- resolveType accessExpr >>= elaborateType
 
                             case t of
-                                Array _ _ -> pure $ init accessInstr
+                                Array _ _ ->
+                                    case last accessInstr of
+                                        Inst OP_LW loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
+                                        Inst OP_LB loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
+                                        inst -> error $ "Unexpected instruction after array access(" ++ show accessExpr ++ "): " ++ show inst
                                 _ -> pure accessInstr
                         _ -> pure accessInstr
 
@@ -424,6 +436,17 @@ compileExpressionTemp (CPrefix Dereference a) = do
     (source, instr) <- compileExpressionTemp a
     dest <- useNextRegister "result_save" $ "temp_deref_" ++ show a
     pure (dest, instr ++ [Inst OP_LW dest "0" source])
+
+compileExpressionTemp expr@(CPrefix AddressOf a) = do
+    (temp, instr) <- compileExpressionTemp a
+
+    if not $ null instr then
+        case last instr of
+            Inst OP_LW dest offset sourceReg -> pure (sourceReg, init instr ++ [Inst OP_ADD sourceReg sourceReg offset])
+            Inst OP_LB dest offset sourceReg -> pure (sourceReg, init instr ++ [Inst OP_ADD sourceReg sourceReg offset])
+            _ -> error $ "Trying to get the address of a non-memory operation: " ++ show expr
+    else
+        error $ "Trying to get the address of a non-memory operation: " ++ show expr
 
 compileExpressionTemp (CPrefix PreNot a) = do
     (source, instr) <- compileExpressionTemp a
@@ -482,7 +505,7 @@ compileExpressionTemp (FuncCall funcName args) = do
              instr ++ argLoading ++ [jumpOp] ++
              [Inst OP_MOVE retVal "v0" ""]) -- Make sure to save func call result.
 
-compileExpressionTemp i = error $ show i
+compileExpressionTemp i = error $ "Not implemented: " ++ show i
 
 compileSizeof :: CExpression -> State Environment (String, [MIPSInstruction])
 compileSizeof expr = do
