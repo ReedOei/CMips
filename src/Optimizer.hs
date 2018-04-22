@@ -15,21 +15,12 @@ import System.IO.Unsafe
 
 optimize :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimize = findTemp [] >=>
+           -- Repeatedly apply optimizations until there are no changes in the code.
            (untilM noChange (optimizeArith [] >=>
                              optimizeResults >=>
                              optimizeJumps) . pure) >=>
            allocateRegisters >=>
            handleResSave
-
-temp :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-temp instrs = do
-    Environment _ _ _ (Local _ registers _) <- get
-    unsafePerformIO $ do
-        print registers
-
-        pure $ modify id
-
-    pure instrs
 
 isNum :: String -> Bool
 isNum = all (`elem` ("1234567890" :: String))
@@ -93,7 +84,7 @@ resolveConstant prev regName
                         -- Need to make sure we don't use li multiple times.
                         Inst OP_LI _ val _ | isNothing (find (hasOperand (== regName)) beforeI) -> Just val
                         Inst OP_MOVE dest source _ | dest == regName -> resolveConstant beforeI source
-                        Inst op a b c | a == regName ->
+                        instr@(Inst op a b c) | isArith instr && a == regName ->
                             -- Make sure both operands are also constants.
                             case (,) <$> (read <$> resolveConstant beforeI b)
                                      <*> (read <$> resolveConstant beforeI c) of
@@ -191,30 +182,34 @@ findTemp examined (instr:instrs) = do
     where
         go instr a
             -- No JALs or JALRs here, so safe to just use temp for this.
-            | isNothing (find isCall (scope a instrs)) && "result_save" `isPrefixOf` a = do
-                ref <- getRegRef a
-                newReg <- useNextRegister "result_temp" ref
-                freeRegister a -- We aren't using this anymore.
-                pure $ replaceOperand a newReg instr
+            | isNothing (find isCall (scope a (instr:instrs))) && "result_save" `isPrefixOf` a = do
+                    ref <- getRegRef a
+                    newReg <- useNextRegister "result_temp" ref
+                    freeRegister a -- We aren't using this anymore.
+                    pure $ replaceOperand a newReg instr
             | otherwise = pure instr
+
+slice from to xs = take (to - from + 1) (drop from xs)
 
 -- Finds the list of instructions for which this register must be in scope.
 scope :: String -> [MIPSInstruction] -> [MIPSInstruction]
-scope regName instrs = take lastIndex instrs
+scope regName instrs = slice firstIndex lastIndex instrs
     where
-        lastIndex =
+        (firstIndex, lastIndex) =
             case findIndices (hasOperand (== regName)) instrs of
-                [] -> 0
-                indices -> last indices
+                [] -> (0, 0)
+                indices -> (head indices, last indices)
 
 -- Converts result_save and result_temp to s and t registers.
-allocateRegisters :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-allocateRegisters [] = pure []
-allocateRegisters (instr:instrs) = do
+allocateRegisters instrs = allocateRegisters' instrs instrs
+
+allocateRegisters' :: [MIPSInstruction] -> [MIPSInstruction] -> State Environment [MIPSInstruction]
+allocateRegisters' _ [] = pure []
+allocateRegisters' allInstrs (instr:instrs) = do
     newInstr <- foldM allocate instr $ getOperands instr
     mapM_ freeIfNotUsed $ getOperands instr
 
-    (:) <$> pure newInstr <*> allocateRegisters instrs
+    (:) <$> pure newInstr <*> allocateRegisters' allInstrs instrs
 
     where
         allocate instr a
@@ -233,7 +228,9 @@ allocateRegisters (instr:instrs) = do
             | otherwise = pure instr
 
         freeIfNotUsed a
-            | any (hasOperand (== a)) instrs = pure ()
+            -- If there are any labels in the scope of a, we can't guarantee there won't be jumps, so to be on the safe side,
+            -- don't free a.
+            | any isLabel (scope a allInstrs) || any (hasOperand (== a)) instrs = pure ()
             | otherwise = freeRegister a
 
 outOfRange :: String -> Bool

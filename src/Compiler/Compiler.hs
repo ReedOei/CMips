@@ -72,7 +72,7 @@ restoreStack reserved registers = restoreInstr ++ [Inst OP_ADD "sp" "sp" (show (
     where restoreInstr = map (\(i, r) -> Inst OP_LW r (show (reserved + i * 4)) "sp") $ zip [0..] registers
 
 compileElement :: CElement -> State Environment [MIPSInstruction]
-compileElement (FuncDef t funcName args statements) =
+compileElement func@(FuncDef t funcName args statements) =
     if null statements then
         pure []
     else do
@@ -100,16 +100,24 @@ compileElement (FuncDef t funcName args statements) =
         reserved <- stalloc "" 0 -- Requesting 0 more bytes will give us the top
         modify $ purgeRegTypeEnv "s"
         modify $ purgeRegTypeEnv "t"
-        pure $ Label label : saveStack reserved saveRegs ++ finalInstr ++ restoreStack reserved saveRegs ++ freeMemory ++ [Inst OP_JR "ra" "" ""]
+        pure $ Label label :
+               Comment (readableFuncDef func) :
+               saveStack reserved saveRegs ++
+               finalInstr ++
+               restoreStack reserved saveRegs ++
+               freeMemory ++
+               [Inst OP_JR "ra" "" ""]
     where
         freeMemory =
             case funcName of
                 "main" -> [Inst OP_LI "v0" "10" "", Inst SYSCALL "" "" ""]
                 _ -> []
-compileElement (Inline t funcName args statements) = do
+compileElement func@(Inline t funcName args statements) = do
     (label, funcEnd) <- funcLabel funcName
 
-    pure $ Label label : map (\str -> Inst LIT_ASM str "" "") statements
+    pure $ Comment (readableFuncDef func) :
+           Label label :
+           map (\str -> Inst LIT_ASM str "" "") statements
 
 compileElement (StructDef structName _) = pure [Comment $ "struct " ++ structName]
 
@@ -376,11 +384,7 @@ compileExpressionTemp (CArrayAccess accessExpr expr) = do
                             t <- resolveType accessExpr >>= elaborateType
 
                             case t of
-                                Array _ _ ->
-                                    case last accessInstr of
-                                        Inst OP_LW loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
-                                        Inst OP_LB loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
-                                        inst -> error $ "Unexpected instruction after array access(" ++ show accessExpr ++ "): " ++ show inst
+                                Array _ _ -> pure $ init accessInstr
                                 _ -> pure accessInstr
                         _ -> pure accessInstr
 
@@ -389,9 +393,11 @@ compileExpressionTemp (CArrayAccess accessExpr expr) = do
                             t <- resolveType accessExpr >>= elaborateType
 
                             case t of
-                                Array _ _ -> do
-                                    n <- getStructOffset e name
-                                    pure [Inst OP_ADD dest dest (show n)]
+                                Array _ _ ->
+                                    case last accessInstr of
+                                        Inst OP_LW loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
+                                        Inst OP_LB loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
+                                        inst -> error $ "Unexpected instruction after array access(" ++ show accessExpr ++ "): " ++ show inst
                                 _ -> pure []
                         _ -> pure []
 

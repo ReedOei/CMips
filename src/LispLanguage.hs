@@ -13,8 +13,7 @@ data Expr = IntVal Int |
             Quoted String |
             Evaluate Expr [Expr] |
             List [Expr] |
-            Define String [String] [Expr] |
-            Comment
+            Define String [String] [Expr]
     -- deriving Eq
     deriving (Eq, Show)
 

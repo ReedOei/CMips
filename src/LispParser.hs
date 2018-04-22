@@ -26,13 +26,13 @@ loadLispFile filename = do
 minilispFile stdLib = MinilispFile stdLib <$> sepEndBy expr whitespace
 
 expr :: CharParser st Expr
-expr = comment <|> val <|> evalFunc <|> listParser
+expr = val <|> evalFunc <|> listParser
 
-comment :: CharParser st Expr
-comment = do
-    char ';'
-    many (noneOf "\r\n")
-    return Comment
+-- comment :: CharParser st Expr
+-- comment = do
+--     char ';'
+--     many (noneOf "\r\n")
+--     return Comment
 
 val :: CharParser st Expr
 val = Quoted <$> quotedVal <|>

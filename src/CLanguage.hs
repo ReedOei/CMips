@@ -161,6 +161,10 @@ readableExpr (CPostfix op expr) = readableExpr expr ++ readablePostfix op
 readableExpr (CArrayAccess accessExpr expr) = readableExpr accessExpr ++ "[" ++ readableExpr expr ++ "]"
 readableExpr (MemberAccess a b) = readableExpr a ++ "." ++ readableExpr b
 
+readableFuncDef :: CElement -> String
+readableFuncDef (FuncDef retType name args _) = readableType retType ++ " " ++ name ++ "(" ++ intercalate "," (map readableVar args) ++ ");"
+readableFuncDef (Inline retType name args _) = readableType retType ++ " " ++ name ++ "(" ++ intercalate "," (map readableVar args) ++ ");"
+
 readableElement :: CElement -> String
 readableElement (StructDef name vars) =
     "struct " ++ name ++ "{\n" ++

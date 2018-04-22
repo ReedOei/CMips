@@ -48,6 +48,9 @@ data MIPSOp = OP_ADD
             | LIT_ASM -- Used for inlining assembly.
     deriving (Show, Eq)
 
+isLabel (Label _) = True
+isLabel _ = False
+
 mnemonic :: MIPSOp -> String
 mnemonic OP_MOVE = "move"
 mnemonic OP_REM = "rem"
