@@ -29,6 +29,7 @@ data CElement = Preprocessor PreKind String
                 | StructDef String [Var]
                 | MiscElement
                 | Inline Type String [Var] [String]
+                | CommentElement CStatement
     deriving (Show, Eq)
 
 data CStatement = Return CExpression

@@ -40,7 +40,7 @@ compile :: CFile -> IO MIPSFile
 compile file = mainCompile <$> preprocessor file
 
 mainCompile :: CFile -> MIPSFile
-mainCompile file@(CFile fname initElements) = MIPSFile fname sections instructions
+mainCompile file@(CFile fname initElements) = MIPSFile fname sections $ filter (not . null) instructions
     where
         sections = [generateDataSection "data" d, generateDataSection "kdata" kd, MIPSSection "text" []]
         (instructions, Environment _ (Data d kd) _ _) = runState state $ newEnvironment $ CFile fname elements

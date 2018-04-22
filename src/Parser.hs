@@ -33,10 +33,11 @@ cElementList = filter (/= MiscElement) <$> sepEndBy cElement (many1 (char '\n'))
 
 cElement :: CharParser st CElement
 cElement = try preprocessorParser <|>
-             try functionParser <|>
-             try structParser <|>
-             try inlineParser <|>
-             pure MiscElement
+           try functionParser <|>
+           try structParser <|>
+           try inlineParser <|>
+           try (CommentElement <$> commentParser) <|>
+           pure MiscElement
 
 float :: CharParser st Float
 float = do
