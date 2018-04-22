@@ -17,12 +17,30 @@ import Compiler.Types
 import Optimizer
 import CLanguage
 import MIPSLanguage
+import Parser (loadFile)
 import Util
 
 import System.IO.Unsafe
 
-compile :: CFile -> MIPSFile
-compile file@(CFile fname initElements) = MIPSFile fname sections instructions
+isInclude (Preprocessor Include _) = True
+isInclude _ = False
+
+-- Do init and tail to get rid of the quotes around it.
+getInclude (Preprocessor Include filename) = init $ tail filename
+
+mergeFiles :: CFile -> CFile -> CFile
+mergeFiles (CFile mainName mainElements) (CFile _ includedElements) = CFile mainName $ includedElements ++ mainElements
+
+preprocessor :: CFile -> IO CFile
+preprocessor mainFile@(CFile fileName elements) = do
+    includedFiles <- mapM ((loadFile >=> preprocessor) . getInclude) $ filter isInclude elements
+    pure $ foldl mergeFiles mainFile includedFiles
+
+compile :: CFile -> IO MIPSFile
+compile file = mainCompile <$> preprocessor file
+
+mainCompile :: CFile -> MIPSFile
+mainCompile file@(CFile fname initElements) = MIPSFile fname sections instructions
     where
         sections = [generateDataSection "data" d, generateDataSection "kdata" kd, MIPSSection "text" []]
         (instructions, Environment _ (Data d kd) _ _) = runState state $ newEnvironment $ CFile fname elements
@@ -463,6 +481,8 @@ compileExpressionTemp (FuncCall funcName args) = do
     pure (retVal,
              instr ++ argLoading ++ [jumpOp] ++
              [Inst OP_MOVE retVal "v0" ""]) -- Make sure to save func call result.
+
+compileExpressionTemp i = error $ show i
 
 compileSizeof :: CExpression -> State Environment (String, [MIPSInstruction])
 compileSizeof expr = do

@@ -38,6 +38,21 @@ cElement = try preprocessorParser <|>
              try inlineParser <|>
              pure MiscElement
 
+float :: CharParser st Float
+float = do
+    negative <- optionMaybe $ oneOf "+-"
+
+    beforeVal <- many (oneOf "123456890")
+    char '.'
+    afterVal <- many (oneOf "1234567890")
+
+    let before = if beforeVal == "" then "0" else beforeVal
+    let after = if afterVal == "" then "0" else afterVal
+
+    case negative of
+        Just sign -> pure $ read $ sign : (before ++ "." ++ after)
+        Nothing -> pure $ read $ before ++ "." ++ after
+
 inlineParser :: CharParser st CElement
 inlineParser = do
     string "mips"
@@ -345,6 +360,7 @@ expressionParser =
                    try funcCallParser <|>
                    try charParser <|>
                    try stringParser <|>
+                   -- LitFloat <$> float <|>
                    LitInt <$> readNum
 
 nullParser :: CharParser st CExpression
@@ -377,6 +393,7 @@ operandParser =
                 try (VarRef <$> cIdentifier) <|>
                 try charParser <|>
                 try stringParser <|>
+                -- LitFloat <$> float <|>
                 LitInt <$> readNum
 
 funcCallParser :: CharParser st CExpression
@@ -397,8 +414,8 @@ operatorTable =
         [binary "*" Mult, binary "/" Div, binary "%" Mod],
         [binary "+" Add, binary "-" Minus],
         [binary ">=" CGTE, binary "<=" CLTE, binary ">" CGT, binary "<" CLT, binary "==" CEQ, binary "!=" CNE],
-        [binary "^" Xor, binary "&" AndBit, binary "|" OrBit],
-        [binary "&&" And, binary "||" Or]
+        [binary "&&" And, binary "||" Or],
+        [binary "^" Xor, binary "&" AndBit, binary "|" OrBit]
     ]
 
 opParser :: String -> (a -> b) -> CharParser st (a -> b)

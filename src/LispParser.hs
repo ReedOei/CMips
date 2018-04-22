@@ -52,19 +52,6 @@ int = do
 
     return $ read $ sign : val
 
-float :: CharParser st Float
-float = do
-    negative <- try (oneOf "+-") <|> return ' '
-    let sign = if negative == '+' then ' ' else negative
-
-    beforeVal <- many (oneOf "123456890")
-    char '.'
-    afterVal <- many (oneOf "1234567890")
-
-    let before = if beforeVal == "" then "0" else beforeVal
-    let after = if afterVal == "" then "0" else afterVal
-    return $ read $ sign : (before ++ "." ++ after)
-
 identifier :: CharParser st String
 identifier = many1 (noneOf "()\r\n \t\'\"")
 

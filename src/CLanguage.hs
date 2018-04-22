@@ -63,6 +63,7 @@ data CExpression = VarRef String
                  | LitInt Int
                  | LitChar Char
                  | LitString String
+                 | LitFloat Float
                  | NULL
                  | FuncCall String [CExpression]
                  | CPrefix PrefixOp CExpression

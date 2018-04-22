@@ -24,9 +24,9 @@ main = do
     case getOpt Permute options args of
         (o, [filename], []) -> do
             text <- if "lisp" `isSuffixOf` filename then
-                        generateFile . compile . compileLisp <$> loadLispFile filename
+                        generateFile <$> (compile =<< (compileLisp <$> loadLispFile filename))
                     else
-                        generateFile . compile <$> loadFile filename
+                        generateFile <$> (compile =<< loadFile filename)
 
             putStrLn text
 
