@@ -56,7 +56,7 @@ float = do
 inlineParser :: CharParser st CElement
 inlineParser = do
     string "mips"
-    optional newlines
+    wsSkip
 
     returnType <- typeParser
     wsSkip

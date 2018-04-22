@@ -28,6 +28,7 @@ findTypesElement :: CElement -> [Var]
 findTypesElement (FuncDef _ _ vars statements) =
     vars ++ concatMap findTypesStatement statements
 findTypesElement StructDef{} = []
+findTypesElement _ = []
 
 findTypesStatement :: CStatement -> [Var]
 findTypesStatement (VarDef var _) = [var]
@@ -86,7 +87,7 @@ resolveFuncCall funcName = do
         Just f -> pure f
 
 elaborateTypesVar :: Var -> State Environment Var
-elaborateTypesVar (Var varType varName) = Var <$> (elaborateType varType) <*> pure varName
+elaborateTypesVar (Var varType varName) = Var <$> elaborateType varType <*> pure varName
 
 elaborateTypes :: CElement -> State Environment CElement
 elaborateTypes (FuncDef t funcName vars statements) =

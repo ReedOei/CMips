@@ -1,8 +1,5 @@
-int f(int x, int y) {
-    if (x > y) {
-        return x;
-    }
-
-    return 0;
+mips int f2(int x) {
+    sw $a0, 0($a1)
+    jr $ra
 }
 
