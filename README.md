@@ -23,7 +23,13 @@ CMips file.c --output out.s
 
 # Non-standard features
 
-- Can define a `mips` block. This assembly will be literally copied into the output file.
+- Can define a `mips` block. This assembly will be literally copied into the output file. This is useful for accessing memory mapped IO, as shown below, which retaining the ability to write most of the program in C. Note that the code is not checked for **anything**, including syntatic correctness. It is simply copied into the function body.
+```
+mips int getVelocity() {
+    lw $v0, VELOCITY_ADDRESS
+    jr $ra
+}
+```
 
 # Known issues
 
