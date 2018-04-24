@@ -19,8 +19,8 @@ optimize = findTemp [] >=>
            (untilM noChange (optimizeArith [] >=>
                              optimizeResults >=>
                              optimizeJumps) . pure) >=>
-           allocateRegisters >=>
-           handleResSave
+            allocateRegisters >=>
+            handleResSave
 
 isNum :: String -> Bool
 isNum = all (`elem` ("1234567890" :: String))
@@ -128,7 +128,71 @@ getNext = find go
         go _ = False
 
 optimizeResults :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-optimizeResults = optimizeUnused [] >=> optimizeArgTemp >=> optimizeIdMove
+optimizeResults = optimizeUnused [] >=> optimizeArgTemp >=> optimizeIdMove >=> optimizeMovedResults >=> optimizeAlias
+
+-- | Optimize a move into a destination, when the destination is only used once.
+-- Example:
+--
+-- move $t0, $t1
+-- sw $t0, 0($t2)
+--
+-- becomes:
+--
+-- sw $t1, 0($t2)
+optimizeAlias :: [MIPSInstruction] -> State Environment [MIPSInstruction]
+optimizeAlias [] = pure []
+optimizeAlias (instr@(Inst OP_MOVE dest source _):instrs) =
+    case filter (hasOperand (== dest)) instrs of
+        -- Make sure there are no uses of dest across labels, jumps, or function calls.
+        [res] | let s = scope dest $ instr:instrs in
+                   not (any isLabel s) && not (any isJump s) && not (any isCall s) ->
+
+            -- If it's safe, we'll just delete this move and replace the dest with the source from now on.
+            optimizeAlias $ map (replaceOperand dest source) instrs
+
+        _ -> prependA instr $ optimizeAlias instrs
+
+optimizeAlias (i:instrs) = prependA i $ optimizeAlias instrs
+
+-- | Optimizes when the result of an instruction isn't used for anything other than being moved into another register.
+-- Example:
+--
+-- jal f
+-- move $t0, $v0
+-- move $a0, $t0
+--
+-- becomes:
+--
+-- jal f
+-- move $a0, $v0
+optimizeMovedResults :: [MIPSInstruction] -> State Environment [MIPSInstruction]
+optimizeMovedResults [] = pure []
+optimizeMovedResults (instr@Inst{}:instrs) =
+    case instResult instr of
+        -- Make sure there aren't any labels or jumps in scope, because then we'd have to predict the control flow.
+        Just res | let s = scope res $ instr:instrs in
+                   not (any isLabel s) && not (any isJump s) && not (any isCall s) ->  do
+            let allUses = find (hasOperand (== res)) instrs
+
+            -- Find next move that moves 'res' into something else
+            case find (go res) instrs of
+                Just (moveInstr@(Inst OP_MOVE a b _)) ->
+                    -- Only optimize if there is only one other use (i.e., the move we found)
+                    if length allUses > 1 || any (/= moveInstr) allUses then
+                        prependA instr $ optimizeMovedResults instrs
+                    else do
+                        let newInstr = replaceOperand b a instr
+                        -- Delete that move instruction, it's unnecessary now
+                        prependA newInstr $ optimizeMovedResults $ filter (/= moveInstr) instrs
+
+                Nothing -> prependA instr $ optimizeMovedResults instrs
+        _ -> prependA instr $ optimizeMovedResults instrs
+
+    where
+        go res (Inst OP_MOVE a b _) = b == res
+        go _ _ = False
+
+optimizeMovedResults (i:instrs) = prependA i $ optimizeMovedResults instrs
 
 optimizeIdMove :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeIdMove [] = pure []

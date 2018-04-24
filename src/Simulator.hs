@@ -238,6 +238,8 @@ executeInstr (Just (instr@(Inst op a b c))) = do
                                 v <- show <$> registerValue "a0"
                                 pure [v]
 
+                            _ -> error $ "Got unknown syscall number: " ++ show syscallNum
+
             (++) <$> pure output <*> (executeInstr =<< next)
 
         _ | isBranch instr -> do

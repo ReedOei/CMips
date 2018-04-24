@@ -192,6 +192,18 @@ isBranch (Inst OP_BLT _ _ _) = True
 isBranch (Inst OP_BLE _ _ _) = True
 isBranch _ = False
 
+isJump (Inst OP_BNE _ _ _) = True
+isJump (Inst OP_BEQ _ _ _) = True
+isJump (Inst OP_BGT _ _ _) = True
+isJump (Inst OP_BGE _ _ _) = True
+isJump (Inst OP_BLT _ _ _) = True
+isJump (Inst OP_BLE _ _ _) = True
+isJump (Inst OP_J _ _ _) = True
+isJump (Inst OP_JR _ _ _) = True
+isJump (Inst OP_JAL _ _ _) = True
+isJump (Inst OP_JALR _ _ _) = True
+isJump _ = False
+
 checkBranch OP_BNE = (/=)
 checkBranch OP_BEQ = (==)
 checkBranch OP_BGT = (>)
