@@ -26,6 +26,8 @@ faster program expected = do
 
     (optTime < noOptTime) `shouldBe` True
 
+    liftIO $ putStrLn $ "Program takes " ++ show (noOptTime - optTime) ++ " fewer instructions (" ++ show (fromIntegral optTime / fromIntegral noOptTime * 100) ++ "%)"
+
 fasterC path = faster (loadFile path)
 
 optimizerTests = do
