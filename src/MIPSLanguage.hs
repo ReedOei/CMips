@@ -48,6 +48,13 @@ data MIPSOp = OP_ADD
             | LIT_ASM -- Used for inlining assembly.
     deriving (Show, Eq)
 
+opList = [OP_ADD, OP_MOVE, OP_LI, OP_LA, OP_MUL,
+          OP_LW, OP_SW, OP_LB, OP_SB, OP_XOR, OP_DIV,
+          OP_SUB, OP_AND, OP_OR, OP_BNE, OP_BEQ,
+          OP_BGT, OP_BGE, OP_BLT, OP_BLE, OP_J,
+          OP_JR, OP_JAL, OP_JALR, OP_SLL, OP_SRL,
+          OP_REM, OP_NOT, SYSCALL]
+
 isLabel (Label _) = True
 isLabel _ = False
 
@@ -153,6 +160,9 @@ isArith (Inst OP_DIV _ _ _) = True
 isArith (Inst OP_SUB _ _ _) = True
 isArith (Inst OP_AND _ _ _) = True
 isArith (Inst OP_OR _ _ _) = True
+isArith (Inst OP_REM _ _ _) = True
+isArith (Inst OP_SLL _ _ _) = True
+isArith (Inst OP_SRL _ _ _) = True
 isArith _ = False
 
 commutes OP_MUL = True
@@ -162,7 +172,7 @@ commutes OP_OR = True
 commutes OP_XOR = True
 commutes _ = False
 
-compute :: MIPSOp -> Integer -> Integer -> Integer
+compute :: MIPSOp -> Int -> Int -> Int
 compute OP_ADD = (+)
 compute OP_MUL = (*)
 compute OP_XOR = xor
@@ -170,6 +180,24 @@ compute OP_DIV = div
 compute OP_SUB = (-)
 compute OP_AND = (.&.)
 compute OP_OR = (.|.)
+compute OP_REM = mod
+compute OP_SRL = shiftR
+compute OP_SLL = shiftL
+
+isBranch (Inst OP_BNE _ _ _) = True
+isBranch (Inst OP_BEQ _ _ _) = True
+isBranch (Inst OP_BGT _ _ _) = True
+isBranch (Inst OP_BGE _ _ _) = True
+isBranch (Inst OP_BLT _ _ _) = True
+isBranch (Inst OP_BLE _ _ _) = True
+isBranch _ = False
+
+checkBranch OP_BNE = (/=)
+checkBranch OP_BEQ = (==)
+checkBranch OP_BGT = (>)
+checkBranch OP_BGE = (>=)
+checkBranch OP_BLT = (<)
+checkBranch OP_BLE = (<=)
 
 instResult :: MIPSInstruction -> Maybe String
 instResult (Inst OP_ADD a _ _) = Just a

@@ -11,6 +11,13 @@ readNum = do
 
     pure $ sign * fromInteger (read digits)
 
+symbol :: CharParser st a -> CharParser st a
+symbol parser = do
+    wsSkip
+    v <- parser
+    wsSkip
+    pure v
+
 wsSkip :: CharParser st ()
 wsSkip = do
     many (oneOf " \r\t")

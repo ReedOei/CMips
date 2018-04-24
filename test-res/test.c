@@ -1,6 +1,10 @@
-// Here is a top level comment that should be fine.
-mips int f2(int x) {
-    sw $a0, 0($a1)
-    jr $ra
+int f(int x) {
+    return x * x + x;
+}
+
+int main() {
+    printf("%d", f(3));
+
+    return 0;
 }
 

@@ -32,6 +32,10 @@ optimizeArith prev (instr:instrs) = do
             if isArith instr then
                 -- Don't need to check any more cases, because all arith will be instructions
                 case instr of
+                    -- If we modify ourselves, we'll assume that we're not constant (for things like i++ in a loop),
+                    -- even though it is possible that we are.
+                    Inst op a b c | a == b || a == c -> instr
+
                     -- Arithmetic identities.
                     Inst OP_ADD a b "0" -> Inst OP_MOVE a b "" -- x+0 = x
                     Inst OP_SUB a b "0" -> Inst OP_MOVE a b "" -- x-0 = x
@@ -39,11 +43,7 @@ optimizeArith prev (instr:instrs) = do
                     Inst OP_MUL a b "1" -> Inst OP_MOVE a b "" -- 1*x = x
                     Inst OP_MUL a b "0" -> Inst OP_LI a "0" "" -- 0*x = 0
 
-                    -- If we modify ourselves, we'll assume that we're not constant (for things like i++ in a loop),
-                    -- even though it is possible that we are.
-                    Inst op a b c | a == b || a == c -> instr
-
-                    -- Only c can be an immediate, for most things, but not if op commutes.
+                    -- -- Only c can be an immediate, for most things, but not if op commutes.
                     Inst op a b c | commutes op ->
                         let cConst = resolveConstant prev c
                             bConst = resolveConstant prev b in
@@ -78,6 +78,9 @@ resolveConstant prev regName
                 let beforeI = reverse $ drop (i + 1) $ reverse prev
                     hasCall = isJust $ find isCall $ take i $ reverse prev in
                     case reverse prev !! i of
+                        -- Make sure we don't optimize away self modifying things.
+                        Inst op a b c | a == regName && (a == b || a == c) -> Nothing
+
                         -- If there was a call and this isn't a saved value, then we can't rely on it being constant through the call.
                         _ | hasCall && not ("result_save" `isPrefixOf` regName)-> Nothing
 

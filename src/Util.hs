@@ -27,3 +27,12 @@ noChange compM newM = do
     new <- newM
     pure $ comp == new
 
+-- | If the function applied to the first value is true, bind to the first function, otherwise, bind to the second
+condM :: Monad m => (a -> Bool) -> m a -> (a -> m b) -> (a -> m b) -> m b
+condM f v thenF elseF = do
+    b <- f <$> v
+    if b then thenF =<< v else elseF =<< v
+
+prependA :: Applicative f => a -> f [a] -> f [a]
+prependA x xs = (:) <$> pure x <*> xs
+
