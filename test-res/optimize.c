@@ -25,3 +25,7 @@ int f3(int x) {
     return 40 - 40;
 }
 
+int main() {
+    printf("%d", g(3) + f(10) + f2(h(f3(20))));
+}
+

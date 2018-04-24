@@ -19,6 +19,6 @@ int f(int x) {
 }
 
 int main() {
-    printf("%d", mySum(1, 4));
+    printf("%d", f(12));
 }
 
