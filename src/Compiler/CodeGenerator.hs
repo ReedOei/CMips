@@ -22,7 +22,10 @@ generateSection (MIPSSection name d) =
     intercalate "\n" (map generateData d)
 
 generateData :: (String, String, String) -> String
-generateData (name, dataType, dataVal) = name ++ ": " ++ "." ++ dataType ++ " " ++ dataVal
+generateData (name, dataType, dataVal) =
+    case dataType of
+        "asciiz" -> name ++ ": " ++ "." ++ dataType ++ " " ++ show dataVal
+        _ -> name ++ ": " ++ "." ++ dataType ++ " " ++ dataVal
 
 generate :: [MIPSInstruction] -> String
 generate [] = ""

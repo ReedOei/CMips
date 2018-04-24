@@ -59,7 +59,7 @@ saveData dataType dataVal = do
     pure name
 
 saveStr :: String -> State Environment String
-saveStr = saveData "asciiz" . show
+saveStr = saveData "asciiz"
 
 useNextRegister :: String -> String -> State Environment String
 useNextRegister rtype str = do
