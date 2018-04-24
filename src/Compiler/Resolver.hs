@@ -1,5 +1,6 @@
 module Compiler.Resolver where
 
+import Control.Lens
 import Control.Monad.State
 
 import Data.List (find, maximumBy)
@@ -80,7 +81,7 @@ getStructOffset expr member = do
 
 resolveFuncCall :: String -> State Environment CElement
 resolveFuncCall funcName = do
-    Environment (CFile _ elements) _ _ _ <- get
+    CFile _ elements <- view file <$> get
 
     case findFuncCall funcName elements of
         Nothing -> error $ "Unresolved reference to function: " ++ funcName
@@ -112,7 +113,7 @@ elaborateTypesSt st = pure st
 
 elaborateType :: Type -> State Environment Type
 elaborateType (NamedType structName) = do
-    Environment (CFile _ elements) _ _ _ <- get
+    CFile _ elements <- view file <$> get
     case findStructDef structName elements of
         Nothing -> pure $ NamedType structName
         Just struct -> pure $ StructType struct
@@ -122,7 +123,7 @@ elaborateType t = pure t
 
 resolve :: String -> State Environment Var
 resolve refName = do
-    Environment (CFile _ elements) _ _ _ <- get
+    CFile _ elements <- view file <$> get
     pure $ fromMaybe (error ("Unknown reference to: " ++ refName)) $
                 find (\(Var _ varName) -> varName == refName) $ concatMap findTypesElement elements
 

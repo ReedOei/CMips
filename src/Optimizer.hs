@@ -18,9 +18,9 @@ optimize = findTemp [] >=>
            -- Repeatedly apply optimizations until there are no changes in the code.
            (untilM noChange (optimizeArith [] >=>
                              optimizeResults >=>
-                             optimizeJumps) . pure) >=>
-            allocateRegisters >=>
-            handleResSave
+                             optimizeJumps) . pure)
+
+allocate = allocateRegisters >=> handleResSave
 
 isNum :: String -> Bool
 isNum = all (`elem` ("1234567890" :: String))

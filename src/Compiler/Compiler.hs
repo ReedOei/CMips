@@ -2,6 +2,7 @@
 
 module Compiler.Compiler where
 
+import Control.Lens (view)
 import Control.Monad
 import Control.Monad.State
 
@@ -37,13 +38,17 @@ preprocessor mainFile@(CFile fileName elements) = do
     pure $ foldl mergeFiles mainFile includedFiles
 
 compile :: CFile -> IO MIPSFile
-compile file = mainCompile <$> preprocessor file
+compile file = compileWith defaultCompileOptions =<< preprocessor file
 
-mainCompile :: CFile -> MIPSFile
-mainCompile file@(CFile fname initElements) = MIPSFile fname sections $ filter (not . null) instructions
+compileWith :: CompileOptions -> CFile -> IO MIPSFile
+compileWith opts file = mainCompile opts <$> preprocessor file
+
+mainCompile :: CompileOptions -> CFile -> MIPSFile
+mainCompile opts file@(CFile fname initElements) = MIPSFile fname sections $ filter (not . null) instructions
     where
         sections = [generateDataSection "data" d, generateDataSection "kdata" kd, MIPSSection "text" []]
-        (instructions, Environment _ (Data d kd) _ _) = runState state $ newEnvironment $ CFile fname elements
+        (Data d kd) = view dataSections env
+        (instructions, env) = runState state $ newEnvironment opts $ CFile fname elements
         elements = fakeFunctions ++ initElements
         fakeFunctions = concatMap generateFuncDec initElements
         state = foldM go [] =<< mapM elaborateTypes elements
@@ -86,7 +91,12 @@ compileElement func@(FuncDef t funcName args statements) =
 
         let body = argInstr ++ instr ++ [Empty, Label funcEnd]
 
-        finalInstr <- optimize body
+        optLevel <- view (compileOptions . optimizeLevel) <$> get
+        finalInstr <-
+            if optLevel > 0 then
+                optimize body >>= allocate
+            else
+                allocate body
         -- let finalInstr = body
         --
 
