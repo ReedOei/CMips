@@ -60,17 +60,8 @@ getStructSizes t = sizeof t
 structPadding :: [Type] -> Int
 structPadding types = maximum $ map getStructSizes types
 
--- Returns the offset of the member of the struct.
-getStructOffset :: CExpression -> String -> State Environment Int
-getStructOffset expr member = do
-    t <- resolveType expr >>= elaborateType
-
-    let members =
-            case t of
-                Type Value (StructType (StructDef _ ms)) -> ms
-                StructType (StructDef _ ms) -> ms
-                _ -> error $ "Tried to get struct offset for member '" ++ member ++ "' but type is '" ++ show t ++ "' which is not a struct."
-
+structOffset :: CElement -> String -> State Environment Int
+structOffset (StructDef _ members) member = do
     types <- mapM (\(Var varType _) -> elaborateType varType) members
     let maxSize = structPadding types
 
@@ -78,6 +69,19 @@ getStructOffset expr member = do
     foldM (\n t -> do
                 newT <- elaborateType t
                 pure $ n + max maxSize (sizeof newT)) 0 varTypes
+
+-- Returns the offset of the member of the struct.
+getStructOffset :: CExpression -> String -> State Environment Int
+getStructOffset expr member = do
+    t <- resolveType expr >>= elaborateType
+
+    let structDef =
+            case t of
+                Type Value (StructType s@(StructDef _ ms)) -> s
+                StructType s@(StructDef _ ms) -> s
+                _ -> error $ "Tried to get struct offset for member '" ++ member ++ "' but type is '" ++ show t ++ "' which is not a struct."
+
+    structOffset structDef member
 
 resolveFuncCall :: String -> State Environment CElement
 resolveFuncCall funcName = do

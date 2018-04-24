@@ -1,10 +1,13 @@
 module CompilerTest where
 
+import Data.List (isInfixOf)
+
 import Test.Hspec
 
 import Compiler.Compiler
 import LispParser
 import LispCompiler
+import MIPSLanguage
 import Parser
 import Simulator
 

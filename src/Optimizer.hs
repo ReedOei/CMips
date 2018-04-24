@@ -128,7 +128,8 @@ getNext = find go
         go _ = False
 
 optimizeResults :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-optimizeResults = optimizeUnused [] >=> optimizeArgTemp >=> optimizeIdMove >=> optimizeMovedResults >=> optimizeAlias
+optimizeResults = optimizeUnused [] >=>
+    optimizeArgTemp >=> optimizeIdMove >=> optimizeMovedResults >=> optimizeAlias
 
 -- | Optimize a move into a destination, when the destination is only used once.
 -- Example:
@@ -167,7 +168,7 @@ optimizeAlias (i:instrs) = prependA i $ optimizeAlias instrs
 -- move $a0, $v0
 optimizeMovedResults :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeMovedResults [] = pure []
-optimizeMovedResults (instr@Inst{}:instrs) =
+optimizeMovedResults (instr@(Inst _ origA origB origC):instrs) =
     case instResult instr of
         -- Make sure there aren't any labels or jumps in scope, because then we'd have to predict the control flow.
         Just res | let s = scope res $ instr:instrs in
@@ -181,7 +182,8 @@ optimizeMovedResults (instr@Inst{}:instrs) =
                     if length allUses > 1 || any (/= moveInstr) allUses then
                         prependA instr $ optimizeMovedResults instrs
                     else do
-                        let newInstr = replaceOperand b a instr
+                        -- Only change the first operand.
+                        let newInstr = setOperands instr [a, origB, origC]
                         -- Delete that move instruction, it's unnecessary now
                         prependA newInstr $ optimizeMovedResults $ filter (/= moveInstr) instrs
 

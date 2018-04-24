@@ -97,8 +97,6 @@ compileElement func@(FuncDef t funcName args statements) =
                 optimize body >>= allocate
             else
                 allocate body
-        -- let finalInstr = body
-        --
 
         let usedSRegs = nub $ filter (isRegType "s") $ concatMap getOperands finalInstr
         let saveRegs =
@@ -480,6 +478,8 @@ compileExpressionTemp (CPostfix PostDecrement a) = do
     pure (source, instr ++ [Inst OP_SUB source source "1"])
 
 compileExpressionTemp (MemberAccess expr (VarRef name)) = do
+    t <- resolveType expr >>= elaborateType
+
     (source, instr) <- compileExpressionTemp expr
     n <- getStructOffset expr name
 

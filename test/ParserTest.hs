@@ -31,6 +31,27 @@ parserTests = do
             let (Right res) = parse ifStatementParser "" "if (x == 0) {\nreturn x + 4;\n}" in
                 res `shouldBe` IfStatement (CBinaryOp CEQ (VarRef "x") (LitInt 0)) Nothing [Return (CBinaryOp Add (VarRef "x") (LitInt 4))]
 
+    describe "varDefParser" $ do
+        it "parses variable declarations" $ do
+            let (Right res) = parse varDefParser "" "int x = 4;"
+            res `shouldBe` VarDef (Var (Type Value (NamedType "int")) "x") (Just (LitInt 4))
+
+        it "parses variable declarations with struct" $ do
+            let (Right res) = parse varDefParser "" "struct Asteroid *a;"
+            res `shouldBe` VarDef (Var (Type Pointer (NamedType "struct Asteroid")) "a") Nothing
+
+        -- it "parses variable declarations with unsigned" $ do
+        --     let (Right res) = parse varDefParser "" "unsigned x = 10;"
+        --     res `shouldBe` VarDef (Var (Type Value (NamedType "unsigned")) "x") (Just (LitInt 10))
+
+        -- it "parses variable declarations with long long" $ do
+        --     let (Right res) = parse varDefParser "" "long long x = 10;"
+        --     res `shouldBe` VarDef (Var (Type Value (NamedType "long long")) "x") (Just (LitInt 10))
+
+        it "parses variable declarations with both unsigned and long" $ do
+            let (Right res) = parse varDefParser "" "unsigned long int x = 10;"
+            res `shouldBe` VarDef (Var (Type Value (NamedType "unsigned long int")) "x") (Just (LitInt 10))
+
     describe "block" $ do
         it "parses a block of C statements without error" $
             parse block "" "{\nint x;\nint y;\n}" `shouldSatisfy` isRight

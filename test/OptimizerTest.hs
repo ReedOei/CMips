@@ -40,6 +40,10 @@ optimizerTests = do
             let (instrs, _) = runState (optimizeMovedResults [Inst OP_MOVE "t1" "t2" "", Inst OP_MOVE "t0" "t1" ""]) emptyEnvironment
             instrs `shouldBe` [Inst OP_MOVE "t0" "t2" ""]
 
+        it "does not change all operands" $ do
+            let (instrs, _) = runState (optimizeMovedResults [Inst OP_LW "s3" "0" "s3", Inst OP_MOVE "s4" "s3" ""]) emptyEnvironment
+            instrs `shouldBe` [Inst OP_LW "s4" "0" "s3"]
+
     describe "optimize" $ do
         it "improves the speed but doesn't change the result of func.c" $
             fasterC "test-res/func.c" ["200"]

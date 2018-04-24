@@ -11,6 +11,7 @@ import Parser
 import CompilerTest
 import OptimizerTest
 import ParserTest
+import ResolverTest
 import SimulatorTest
 
 main :: IO ()
@@ -18,5 +19,6 @@ main = hspec $ do
     parserTests
     simulatorTests
     optimizerTests
+    resolverTests
     compilerTests
 
