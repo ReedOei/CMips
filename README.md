@@ -1,4 +1,5 @@
 # CMips
+[![Build Status](https://travis-ci.org/ReedOei/CMips.svg?branch=master)](https://travis-ci.org/ReedOei/CMips)
 
 A C and Lisp compiler that outputs MIPS assembly code.
 
