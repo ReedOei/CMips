@@ -21,3 +21,17 @@ Write your code in C or Lisp (language is detected via extension), and then run:
 CMips file.c --output out.s
 ```
 
+# Non-standard features
+
+- Can define a `mips` block. This assembly will be literally copied into the output file.
+
+# Known issues
+
+- Currently, cannot parse the type "unsigned". Write "unsigned int" instead.
+- Cannot parse accesses to a struct member after an array access. (e.g., write `(a[i]).b` instead of `a[i].b`).
+
+# TODO
+
+- Support more preprocessor directives. Currently only `#include` is supported.
+- Support floating point numbers.
+
