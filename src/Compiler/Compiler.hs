@@ -560,21 +560,25 @@ compileExpressionTemp (CPostfix PostDecrement a) = do
     (source, instr) <- compileExpressionTemp a
     pure (source, instr ++ [Inst OP_SUB source source "1"])
 
-compileExpressionTemp (MemberAccess expr (VarRef name)) = do
+compileExpressionTemp accessExpr@(MemberAccess expr (VarRef name)) = do
     t <- resolveType expr >>= elaborateType
+
+    memberType <- resolveType accessExpr >>= elaborateType
+
+    let accessOp = if sizeof memberType == 1 then OP_LB else OP_LW
 
     (source, instr) <- compileExpressionTemp expr
     n <- getStructOffset expr name
 
     if not $ null instr then
         case last instr of
-            Inst OP_LW a _ b -> pure (a, init instr ++ [Inst OP_LW a (show n) b])
+            Inst OP_LW a _ b -> pure (a, init instr ++ [Inst accessOp a (show n) b])
             _ -> do
                 dest <- useNextRegister "result_save" $ "access_" ++ name
-                pure (dest, instr ++ [Inst OP_LW dest (show n) source])
+                pure (dest, instr ++ [Inst accessOp dest (show n) source])
     else do
         dest <- useNextRegister "result_save" $ "access_" ++ name
-        pure (dest, instr ++ [Inst OP_LW dest (show n) source])
+        pure (dest, instr ++ [Inst accessOp dest (show n) source])
 
 -- t0 is just a dummy register because we should never use the value that comes from calling printf.
 compileExpressionTemp (FuncCall "printf" args) = ("t0",) <$> compilePrintf args
