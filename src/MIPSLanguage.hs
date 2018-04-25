@@ -283,6 +283,27 @@ checkBranchFloat OP_CEQS = (==)
 checkBranchFloat OP_CLES = (<=)
 checkBranchFloat OP_CLTS = (<)
 
+isFloatInstr :: MIPSInstruction -> Bool
+isFloatInstr (Inst OP_ADDS _ _ _) = True
+isFloatInstr (Inst OP_MULS _ _ _) = True
+isFloatInstr (Inst OP_DIVS _ _ _) = True
+isFloatInstr (Inst OP_SUBS _ _ _) = True
+isFloatInstr (Inst OP_MOVS _ _ _) = True
+isFloatInstr (Inst OP_MTC1 _ _ _) = True
+-- This one doesn't count because it's result isn't a float.
+-- isFloatInstr (Inst OP_MFC1 _ _ _) = True
+isFloatInstr (Inst OP_CVT_W_S _ _ _) = True
+isFloatInstr (Inst OP_CVT_S_W _ _ _) = True
+isFloatInstr (Inst OP_CEQS _ _ _) = True
+isFloatInstr (Inst OP_CLES _ _ _) = True
+isFloatInstr (Inst OP_CLTS _ _ _) = True
+isFloatInstr (Inst OP_BC1F _ _ _) = True
+isFloatInstr (Inst OP_BC1T _ _ _) = True
+isFloatInstr (Inst OP_LS _ _ _) = True
+isFloatInstr (Inst OP_SS _ _ _) = True
+isFloatInstr (Inst OP_LIS  _ _ _) = True
+isFloatInstr _ = False
+
 instResult :: MIPSInstruction -> Maybe String
 instResult (Inst OP_ADD a _ _) = Just a
 instResult (Inst OP_MOVE a _ _) = Just a
@@ -351,7 +372,7 @@ instUses (Inst OP_CLTS a b _) = [a,b]
 instUses (Inst OP_LS _ _ c) = [c]
 instUses (Inst OP_SS a _ c) = [a,c]
 
--- Unlist insturctions are assumed to use all of their registers.
+-- Unlisted instructions are assumed to use all of their registers.
 instUses (Inst _ a b c) = [a, b, c]
 instUses _ = []
 
