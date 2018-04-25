@@ -21,7 +21,10 @@ sizeof (NamedType "long long int") = 8
 sizeof (NamedType "double") = 8 -- Don't actually support doubles.
 sizeof (NamedType "float") = 4
 sizeof (NamedType _) = 4
-sizeof (StructType (StructDef _ vars)) = sum $ map (sizeof . (\(Var varType _) -> varType)) vars
+sizeof (StructType (StructDef _ vars)) = sum $ map (\t -> max (sizeof t) maxSize) types
+    where
+        types = map (\(Var varType _) -> varType) vars
+        maxSize = structPadding types
 sizeof (Type Pointer _) = 4 -- Assume 32 bit pointers.
 sizeof (Type Value t) = sizeof t
 sizeof (Array size t) = size * sizeof t
@@ -67,7 +70,7 @@ structOffset (StructDef _ members) member = do
     types <- mapM (\(Var varType _) -> elaborateType varType) members
     let maxSize = structPadding types
 
-    let varTypes = map (\(Var varType _) -> varType) $ takeWhile (\(Var _ name) -> name /= member) members
+    varTypes <- mapM (\(Var varType _) -> elaborateType varType) $ takeWhile (\(Var _ name) -> name /= member) members
     foldM (\n t -> do
                 newT <- elaborateType t
                 pure $ n + max maxSize (sizeof newT)) 0 varTypes
