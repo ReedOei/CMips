@@ -9,8 +9,12 @@ float f(float x) {
 float sum(float *arr, int len) {
     float result = 0;
 
-    for (int i = 0; i < len; i++) {
-        result += arr[i];
+    for (int i = 1; i < len; i++) {
+        if (arr[i] > i * arr[i - 1]) {
+            result += arr[i];
+        } else if (arr[i] <= 10.5) {
+            result *= arr[i];
+        }
     }
 
     return result;
@@ -23,9 +27,9 @@ int main() {
 
     printf("%d\n", floored);
 
-    float *arr = malloc(40);
+    float *arr = malloc(400);
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 100; i++) {
         arr[i] = i*i;
     }
 

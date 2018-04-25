@@ -196,6 +196,8 @@ branchTarget (Inst OP_BGT _ _ target) = Just target
 branchTarget (Inst OP_BGE _ _ target) = Just target
 branchTarget (Inst OP_BLT _ _ target) = Just target
 branchTarget (Inst OP_BLE _ _ target) = Just target
+branchTarget (Inst OP_BC1F target _ _) = Just target
+branchTarget (Inst OP_BC1T target _ _) = Just target
 branchTarget _ = Nothing
 
 isArith :: MIPSInstruction -> Bool
@@ -266,6 +268,8 @@ isJump (Inst OP_J _ _ _) = True
 isJump (Inst OP_JR _ _ _) = True
 isJump (Inst OP_JAL _ _ _) = True
 isJump (Inst OP_JALR _ _ _) = True
+isJump (Inst OP_BC1F _ _ _) = True
+isJump (Inst OP_BC1T _ _ _) = True
 isJump _ = False
 
 checkBranch OP_BNE = (/=)

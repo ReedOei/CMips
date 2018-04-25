@@ -154,11 +154,26 @@ compileCondition trueLabel falseLabel st@(CBinaryOp Or a b) = do
 
     pure $ aInstr ++ bInstr ++ [Inst OP_J falseLabel "" ""]
 
-compileCondition trueLabel falseLabel expr@(CBinaryOp op a b) =
-    let opposite = getBranchOpNeg op in do
-        (aReg, aInstr) <- compileExpression a
-        (bReg, bInstr) <- compileExpression b
+compileCondition trueLabel falseLabel expr@(CBinaryOp op a b) = do
+    (aReg, aInstr) <- compileExpression a
+    (bReg, bInstr) <- compileExpression b
 
+    aType <- resolveType a >>= elaborateType
+    bType <- resolveType b >>= elaborateType
+
+    if isFloating aType || isFloating bType then do
+        aFloatingReg <- useNextRegister "result_float" "a_cond_float"
+        bFloatingReg <- useNextRegister "result_float" "b_cond_float"
+
+        instr <- compileFloatCondition trueLabel falseLabel op aFloatingReg bFloatingReg
+
+        if isFloating aType && isFloating bType then
+            pure $ aInstr ++ bInstr ++ [Inst OP_MTC1 aReg aFloatingReg "", Inst OP_MTC1 bReg bFloatingReg ""] ++ instr
+        else if isFloating aType && isIntegral bType then
+            pure $ aInstr ++ bInstr ++ [Inst OP_MTC1 aReg aFloatingReg "", Inst OP_MTC1 bReg bFloatingReg "", Inst OP_CVT_S_W bFloatingReg bFloatingReg ""] ++ instr
+        else
+            pure $ aInstr ++ bInstr ++ [Inst OP_MTC1 aReg aFloatingReg "", Inst OP_CVT_S_W aFloatingReg aFloatingReg "", Inst OP_MTC1 bReg bFloatingReg ""] ++ instr
+    else let opposite = getBranchOpNeg op in do
         res <- if op `elem` [CEQ, CNE, CLT, CGT, CLTE, CGTE] then
                     if not $ null falseLabel then
                         pure $ aInstr ++ bInstr ++ [Inst opposite aReg bReg falseLabel]
@@ -172,6 +187,21 @@ compileCondition trueLabel falseLabel expr@(CBinaryOp op a b) =
         else
             pure res
 compileCondition trueLabel falseLabel expr = compileCondition trueLabel falseLabel (CBinaryOp CNE expr (LitInt 0))
+
+compileFloatCondition trueLabel falseLabel op aReg bReg = do
+    let invert = not (op == CGT || op == CNE || op == CGTE)
+    let comparison = case op of
+                    CEQ -> [Inst OP_CEQS aReg bReg ""]
+                    CNE -> [Inst OP_CEQS aReg bReg ""]
+                    CLT -> [Inst OP_CLTS aReg bReg ""]
+                    CLTE -> [Inst OP_CLES aReg bReg ""]
+                    CGT -> [Inst OP_CLES aReg bReg ""]
+                    CGTE -> [Inst OP_CLTS aReg bReg ""]
+    let target = if not $ null falseLabel then falseLabel else trueLabel
+    if invert then
+        pure $ comparison ++ [Inst OP_BC1F target "" ""]
+    else
+        pure $ comparison ++ [Inst OP_BC1T target "" ""]
 
 -- Returns the label to go to in order to skip this block.
 handleIfStatement :: CStatement -> State Environment (String, [MIPSInstruction])
