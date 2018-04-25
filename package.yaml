@@ -28,6 +28,7 @@ dependencies:
 - split
 - MissingH
 - lens
+- optparse-applicative
 
 library:
   source-dirs: src

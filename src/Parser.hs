@@ -393,7 +393,7 @@ expressionParser =
                    try funcCallParser <|>
                    try charParser <|>
                    try stringParser <|>
-                   -- LitFloat <$> float <|>
+                   try (LitFloat <$> float) <|>
                    LitInt <$> readNum
 
 nullParser :: CharParser st CExpression
@@ -426,7 +426,7 @@ operandParser =
                 try (VarRef <$> cIdentifier) <|>
                 try charParser <|>
                 try stringParser <|>
-                -- LitFloat <$> float <|>
+                try (LitFloat <$> float) <|>
                 LitInt <$> readNum
 
 funcCallParser :: CharParser st CExpression

@@ -35,6 +35,7 @@ mips int getVelocity() {
 
 - Currently, cannot parse the type "unsigned". Write "unsigned int" instead.
 - Cannot parse accesses to a struct member after an array access. (e.g., write `(a[i]).b` instead of `a[i].b`).
+- Local variable resolution looks for everything in the function, doesn't properly respect blocks.
 
 # TODO
 

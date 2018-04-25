@@ -374,9 +374,16 @@ compileExpressionTemp (LitChar c) = do
     pure (reg, [Inst OP_LI reg (show (ord c)) ""])
 
 compileExpressionTemp (LitString s) = do
-    name <- saveStr s
+    name <- saveData "asciiz" s
     reg <- useNextRegister "result_save" name
     pure (reg, [Inst OP_LA reg name ""])
+
+compileExpressionTemp (LitFloat f) = do
+    floatReg <- useNextRegister "result_float" "load_float_constant"
+    reg <- useNextRegister "result_save" $ show f
+
+    pure (reg, [Inst OP_LIS floatReg (show f) "", Inst OP_MFC1 reg floatReg ""])
+
 
 compileExpressionTemp NULL =  pure ("0", [])
 
@@ -436,7 +443,29 @@ compileExpressionTemp (CBinaryOp op a b) = do
         CEQ -> do
             endEqualityTest <- getNextLabel "end_eq_test"
             pure (reg, aInstr ++ bInstr ++ [Inst OP_LI reg "1" "", Inst OP_BEQ aReg bReg endEqualityTest, Inst OP_LI reg "0" "", Label endEqualityTest])
-        _ -> pure (reg, aInstr ++ bInstr ++ [Inst (opFind op) reg aReg bReg])
+        _ -> do
+            aType <- resolveType a >>= elaborateType
+            bType <- resolveType b >>= elaborateType
+
+            case getPriorityType aType bType of
+                NamedType "float" -> do
+                    aFloatReg <- useNextRegister "result_float" "float_reg_a"
+                    bFloatReg <- useNextRegister "result_float" "float_reg_b"
+                    resultFloatReg <- useNextRegister "result_float" "float_reg_result"
+
+                    let aConv =
+                            case aType of
+                                NamedType "float" -> [Inst OP_MTC1 aReg aFloatReg ""]
+                                _ -> [Inst OP_MTC1 aReg aFloatReg "", Inst OP_CVT_S_W aFloatReg aFloatReg ""]
+                    let bConv =
+                            case bType of
+                                NamedType "float" -> [Inst OP_MTC1 bReg bFloatReg ""]
+                                _ -> [Inst OP_MTC1 bReg bFloatReg "", Inst OP_CVT_S_W bFloatReg bFloatReg ""]
+
+                    pure (reg, aInstr ++ bInstr ++ aConv ++ bConv ++
+                               [Inst (opFindFloat op) resultFloatReg aFloatReg bFloatReg,
+                                Inst OP_MFC1 reg resultFloatReg ""])
+                _ -> pure (reg, aInstr ++ bInstr ++ [Inst (opFind op) reg aReg bReg])
 
 compileExpressionTemp (CPrefix PreIncrement a) = do
     (source, instr) <- compileExpressionTemp a
@@ -547,6 +576,12 @@ compilePrintf (LitString formatStr:args) = do
     where
         go x "" = pure x
 
+        go (a:as, curInstr) "%f" = do
+            (reg, instr) <- compileExpressionTemp a
+
+            -- 12 MUST BE USED.
+            pure (as, curInstr ++ instr ++ [Inst OP_MTC1 reg "f12" "", Inst OP_LI "v0" "2" "", Inst SYSCALL "" "" ""]) -- 2 is print float.
+
         go (a:as, curInstr) "%s" = do
             (reg, instr) <- compileExpressionTemp a
             t <- resolveType a >>= elaborateType
@@ -560,7 +595,7 @@ compilePrintf (LitString formatStr:args) = do
             pure (as, curInstr ++ instr ++ [Inst OP_MOVE "a0" reg "", Inst OP_LI "v0" "1" "", Inst SYSCALL "" "" ""]) -- 1 is print int.
 
         go (as, curInstr) str = do
-            name <- saveStr str
+            name <- saveData "asciiz" str
             reg <- useNextRegister "result_save" name
             pure (as, curInstr ++ [Inst OP_LA "a0" name "", Inst OP_LI "v0" "4" "", Inst SYSCALL "" "" ""]) -- 4 is print string
 

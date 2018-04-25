@@ -151,6 +151,7 @@ readableExpr :: CExpression -> String
 readableExpr (LitInt n) = show n
 readableExpr (LitString s) = show s
 readableExpr (LitChar c) = show c
+readableExpr (LitFloat f) = show f
 readableExpr NULL = "NULL"
 readableExpr (VarRef x) = x
 readableExpr (CBinaryOp op a b) = "(" ++ readableExpr a ++ " " ++ readableOp op ++ " " ++ readableExpr b ++ ")"

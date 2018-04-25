@@ -46,6 +46,24 @@ data MIPSOp = OP_ADD
             | OP_NOT
             | SYSCALL
             | LIT_ASM -- Used for inlining assembly.
+            -- Float operations
+            | OP_ADDS
+            | OP_MULS
+            | OP_DIVS
+            | OP_SUBS
+            | OP_MOVS
+            | OP_MTC1 -- Move to float processor.
+            | OP_MFC1 -- Move from float processor.
+            | OP_CVT_W_S -- Convert float to int (word, single)
+            | OP_CVT_S_W -- Convert int to float (single, word)
+            | OP_CEQS -- Set code to 1 if equal.
+            | OP_CLES -- Set code to 1 if less than or equal to
+            | OP_CLTS -- Set code to 1 if less than
+            | OP_BC1F -- Branch if code == 0
+            | OP_BC1T -- Branch if code == 1
+            | OP_LWC1 -- Load single
+            | OP_SWC1 -- Store single
+            | OP_LIS -- Load immediate single.
     deriving (Show, Eq)
 
 opList = [OP_ADD, OP_MOVE, OP_LI, OP_LA, OP_MUL,
@@ -53,7 +71,10 @@ opList = [OP_ADD, OP_MOVE, OP_LI, OP_LA, OP_MUL,
           OP_SUB, OP_AND, OP_OR, OP_BNE, OP_BEQ,
           OP_BGT, OP_BGE, OP_BLT, OP_BLE, OP_J,
           OP_JR, OP_JAL, OP_JALR, OP_SLL, OP_SRL,
-          OP_REM, OP_NOT, SYSCALL]
+          OP_REM, OP_NOT, SYSCALL, OP_ADDS, OP_MULS,
+          OP_SUBS, OP_MOVS, OP_MTC1, OP_MFC1, OP_CVT_W_S,
+          OP_CVT_S_W, OP_CEQS, OP_CLES, OP_CLTS, OP_BC1F,
+          OP_BC1T, OP_LWC1, OP_SWC1, OP_LIS]
 
 isLabel (Label _) = True
 isLabel _ = False
@@ -88,6 +109,31 @@ mnemonic OP_SLL = "sll"
 mnemonic OP_SRL = "srl"
 mnemonic OP_NOT = "not"
 mnemonic SYSCALL = "syscall"
+mnemonic OP_ADDS = "add.s"
+mnemonic OP_MULS = "mul.s"
+mnemonic OP_DIVS = "div.s"
+mnemonic OP_SUBS = "sub.s"
+mnemonic OP_MOVS = "mov.s"
+mnemonic OP_MTC1 = "mtc1"
+mnemonic OP_MFC1 = "mfc1"
+mnemonic OP_CVT_W_S = "cvt.w.s"
+mnemonic OP_CVT_S_W = "cvt.s.w"
+mnemonic OP_CEQS = "c.eq.s"
+mnemonic OP_CLES = "c.le.s"
+mnemonic OP_CLTS = "c.lt.s"
+mnemonic OP_BC1F = "bc1f"
+mnemonic OP_BC1T = "bc1t"
+mnemonic OP_SWC1 = "swc1"
+mnemonic OP_LWC1 = "lwc1"
+mnemonic OP_LIS = "li.s"
+
+opFindFloat :: BinaryOp -> MIPSOp
+opFindFloat Add = OP_ADDS
+opFindFloat Mult = OP_MULS
+opFindFloat Minus = OP_SUBS
+opFindFloat Div = OP_DIVS
+opFindFloat CNE = OP_SUBS -- If they are the same, we will get 0, which is false.
+opFindFloat op = error $ "Unknown operation: '" ++ show op ++ "'"
 
 opFind :: BinaryOp -> MIPSOp
 opFind Add = OP_ADD
@@ -228,6 +274,17 @@ instResult (Inst OP_REM a _ _) = Just a
 instResult (Inst OP_NOT a _ _) = Just a
 instResult (Inst OP_LI a _ _) = Just a
 instResult (Inst OP_LA a _ _) = Just a
+instResult (Inst OP_ADDS a _ _) = Just a
+instResult (Inst OP_MULS a _ _) = Just a
+instResult (Inst OP_DIVS a _ _) = Just a
+instResult (Inst OP_SUBS a _ _) = Just a
+instResult (Inst OP_MOVS a _ _) = Just a
+instResult (Inst OP_MTC1 _ b _) = Just b
+instResult (Inst OP_MFC1 a _ _) = Just a
+instResult (Inst OP_CVT_W_S a _ _) = Just a
+instResult (Inst OP_CVT_S_W a _ _) = Just a
+instResult (Inst OP_LWC1 a _ _) = Just a
+instResult (Inst OP_LIS a _ _) = Just a
 instResult _ = Nothing
 
 instUses :: MIPSInstruction -> [String]
@@ -255,5 +312,20 @@ instUses (Inst OP_SLL _ b c) = [b,c]
 instUses (Inst OP_SRL _ b c) = [b,c]
 instUses (Inst OP_REM _ b c) = [b,c]
 instUses (Inst OP_NOT _ b _) = [b]
+instUses (Inst OP_ADDS _ b c) = [b,c]
+instUses (Inst OP_MULS _ b c) = [b,c]
+instUses (Inst OP_DIVS _ b c) = [b,c]
+instUses (Inst OP_SUBS _ b c) = [b,c]
+instUses (Inst OP_MOVS _ b _) = [b]
+instUses (Inst OP_CVT_W_S _ b _) = [b]
+instUses (Inst OP_CVT_S_W _ b _) = [b]
+instUses (Inst OP_CEQS a b _) = [a,b]
+instUses (Inst OP_CLES a b _) = [a,b]
+instUses (Inst OP_CLTS a b _) = [a,b]
+instUses (Inst OP_LWC1 _ _ c) = [c]
+instUses (Inst OP_SWC1 a _ c) = [a,c]
+
+-- Unlist insturctions are assumed to use all of their registers.
+instUses (Inst _ a b c) = [a, b, c]
 instUses _ = []
 

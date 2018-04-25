@@ -31,6 +31,15 @@ parserTests = do
             let (Right res) = parse ifStatementParser "" "if (x == 0) {\nreturn x + 4;\n}" in
                 res `shouldBe` IfStatement (CBinaryOp CEQ (VarRef "x") (LitInt 0)) Nothing [Return (CBinaryOp Add (VarRef "x") (LitInt 4))]
 
+    describe "varParser" $ do
+        it "parses normal variables" $ do
+            let (Right res) = parse varParser "" "int x"
+            res `shouldBe` Var (Type Value (NamedType "int")) "x"
+
+        it "parses function pointers variables" $ do
+            let (Right res) = parse varParser "" "int (*f)(int)"
+            res `shouldBe` Var (FunctionPointer (Type Value (NamedType "int")) [Type Value (NamedType "int")]) "f"
+
     describe "varDefParser" $ do
         it "parses variable declarations" $ do
             let (Right res) = parse varDefParser "" "int x = 4;"

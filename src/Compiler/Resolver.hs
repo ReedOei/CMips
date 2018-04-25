@@ -3,7 +3,7 @@ module Compiler.Resolver where
 import Control.Lens
 import Control.Monad.State
 
-import Data.List (find, maximumBy)
+import Data.List (find, maximumBy, isInfixOf)
 import Data.Maybe (fromMaybe)
 import Data.Ord (comparing)
 
@@ -17,10 +17,11 @@ sizeof (NamedType "char") = 1
 sizeof (NamedType "unsigned char") = 1
 sizeof (NamedType "short") = 2
 sizeof (NamedType "long long int") = 8
-sizeof (NamedType "double") = 8
+sizeof (NamedType "double") = 8 -- Don't actually support doubles.
+sizeof (NamedType "float") = 4
 sizeof (NamedType _) = 4
 sizeof (StructType (StructDef _ vars)) = sum $ map (sizeof . (\(Var varType _) -> varType)) vars
-sizeof (Type Pointer _) = 4 -- 32 bit pointers.
+sizeof (Type Pointer _) = 4 -- Assume 32 bit pointers.
 sizeof (Type Value t) = sizeof t
 sizeof (Array size t) = size * sizeof t
 sizeof _ = 4
@@ -83,13 +84,11 @@ getStructOffset expr member = do
 
     structOffset structDef member
 
-resolveFuncCall :: String -> State Environment CElement
+resolveFuncCall :: String -> State Environment (Maybe CElement)
 resolveFuncCall funcName = do
     CFile _ elements <- view file <$> get
 
-    case findFuncCall funcName elements of
-        Nothing -> error $ "Unresolved reference to function: " ++ funcName
-        Just f -> pure f
+    pure $ findFuncCall funcName elements
 
 elaborateTypesVar :: Var -> State Environment Var
 elaborateTypesVar (Var varType varName) = Var <$> elaborateType varType <*> pure varName
@@ -131,10 +130,24 @@ resolve refName = do
     pure $ fromMaybe (error ("Unknown reference to: " ++ refName)) $
                 find (\(Var _ varName) -> varName == refName) $ concatMap findTypesElement elements
 
+-- Won't be 100% accurate for the scope, but it should be "good enough"
+getVars :: CStatement -> [Var]
+getVars (VarDef v _) = [v]
+getVars (IfStatement _ (Just elseBlock) thenBlock) = getVars elseBlock ++ concatMap getVars thenBlock
+getVars (IfStatement _ Nothing thenBlock) = concatMap getVars thenBlock
+getVars (ElseBlock body) = concatMap getVars body
+getVars (WhileStatement _ body) = concatMap getVars body
+getVars (ForStatement init _ step body) = getVars init ++ getVars step ++ concatMap getVars body
+getVars _ = []
+
+getLocalVariables :: CElement -> [Var]
+getLocalVariables (FuncDef retType name args body) = args ++ concatMap getVars body
+
 resolveType :: CExpression -> State Environment Type
 resolveType (VarRef str) = resolve str >>= (\(Var varType _) -> pure varType)
-resolveType (LitInt n) = pure $ Type Value $ NamedType "int"
-resolveType (LitChar n) = pure $ Type Value $ NamedType "char"
+resolveType (LitInt n) = pure $ NamedType "int"
+resolveType (LitChar n) = pure $ NamedType "char"
+resolveType (LitFloat _) = pure $ NamedType "float"
 resolveType NULL = pure $ Type Pointer $ NamedType "void"
 
 resolveType (CPrefix Dereference expr) = do
@@ -149,8 +162,25 @@ resolveType (CPrefix _ expr) = resolveType expr
 resolveType (CArrayAccess accessExpr _) = resolveType $ CPrefix Dereference accessExpr
 resolveType (CPostfix _ expr) = resolveType expr
 resolveType (FuncCall funcName _) = do
-    FuncDef t _ _ _ <- resolveFuncCall funcName
-    pure t
+    f <- resolveFuncCall funcName
+
+    case f of
+        Just (FuncDef t _ _ _ ) -> pure t
+        -- Possible function pointer, see if it's a local variable name.
+        Nothing -> do
+            curFuncName <- view (global.curFunc) <$> get
+            curFuncDef <- resolveFuncCall curFuncName
+
+            case curFuncDef of
+                Nothing -> error $ "Currently in function '" ++ curFuncName ++ "' but this function does not seem to exist."
+                Just def ->
+                    case find (fPointer funcName) $ getLocalVariables def of
+                        Nothing -> error $ "Undefined reference to function: '" ++ show funcName ++ "'"
+                        Just (Var (FunctionPointer retType _) _) -> pure retType
+    where
+        fPointer name (Var (FunctionPointer _ _) varName) = name == varName
+        fPointer _ _ = False
+
 resolveType (MemberAccess accessExpr (VarRef name)) = do
     accessType <- resolveType accessExpr
     structType <- elaborateType accessType
@@ -169,8 +199,20 @@ resolveType expr@(CBinaryOp _ a b) = do
     aType <- resolveType a
     bType <- resolveType b
 
-    if aType == bType then
-        pure aType
+    if aType == bType || (isNumericType aType && isNumericType bType) then
+        pure $ getPriorityType aType bType
     else
         error $ "Types in expression '" ++ readableExpr expr ++ "' don't match (" ++ show aType ++ " and " ++ show bType ++ ")"
+
+resolveType expr = error $ "Unexpected expression type: " ++ show expr
+
+isNumericType :: Type -> Bool
+isNumericType (NamedType name) = "float" `isInfixOf` name || "int" `isInfixOf` name || "long" `isInfixOf` name || "char" `isInfixOf` name
+isNumericType (Type Value t) = isNumericType t
+isNumericType _ = False
+
+getPriorityType :: Type -> Type -> Type
+getPriorityType t@(NamedType "float") _ = t
+getPriorityType _ t@(NamedType "float") = t
+getPriorityType t _ = t
 

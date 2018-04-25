@@ -128,8 +128,7 @@ getNext = find go
         go _ = False
 
 optimizeResults :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-optimizeResults = optimizeUnused [] >=>
-    optimizeArgTemp >=> optimizeIdMove >=> optimizeMovedResults >=> optimizeAlias
+optimizeResults = optimizeUnused [] >=> optimizeArgTemp >=> optimizeIdMove >=> optimizeMovedResults >=> optimizeAlias
 
 -- | Optimize a move into a destination, when the destination is only used once.
 -- Example:
@@ -209,7 +208,11 @@ optimizeArgTemp :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeArgTemp [] = pure []
 optimizeArgTemp (instr:instrs) =
     case instr of
-        Inst OP_MOVE a b c | isRegType "a" b && isRegType "result_temp" a ->
+        Inst OP_MOVE a b c |
+            -- We also need to make sure that there isn't any usage of the a register as an actual argument in the scope of the temp
+            -- register, otherwise we would overwrite it.
+            isRegType "a" b && isRegType "result_temp" a &&
+            isNothing (find (hasOperand (== b)) (scope a (instr:instrs)))->
             optimizeArgTemp $ map (replaceOperand a b) instrs
         _ -> (:) <$> pure instr <*> optimizeArgTemp instrs
 
@@ -223,8 +226,11 @@ optimizeUnused prev (instr:instrs) =
         Inst OP_SW _ _ _ -> (:) <$> pure instr <*> optimizeUnused (prev ++ [instr]) instrs
         Inst OP_SB _ _ _ -> (:) <$> pure instr <*> optimizeUnused (prev ++ [instr]) instrs
         _ -> case instResult instr of
-                -- By default, v and a registers are always assumed used.
-                Just regName | isRegType "v" regName || isRegType "a" regName -> (:) <$> pure instr <*> optimizeUnused (prev ++ [instr]) instrs
+                -- By default, v, a, and result_float registers are always assumed used.
+                Just regName | isRegType "v" regName ||
+                               isRegType "a" regName ||
+                               isRegType "f" regName || -- Have to do this in addition to result float because we need f12 for printing floats.
+                               isRegType "result_float" regName -> prependA instr $ optimizeUnused (prev ++ [instr]) instrs
 
                 -- Look at everything but this instruction (but obviously this instruction is relevant to itself)
                 Just regName | regName `notElem` nub (concatMap instUses (prev ++ instrs)) -> optimizeUnused prev instrs
@@ -269,7 +275,7 @@ scope regName instrs = slice firstIndex lastIndex instrs
                 [] -> (0, 0)
                 indices -> (head indices, last indices)
 
--- Converts result_save and result_temp to s and t registers.
+-- Converts result_save to s registers, result_temp to t registers, and result_float to f registers (but ignores 12 to save for printing).
 allocateRegisters instrs = allocateRegisters' instrs instrs
 
 allocateRegisters' :: [MIPSInstruction] -> [MIPSInstruction] -> State Environment [MIPSInstruction]
@@ -282,12 +288,16 @@ allocateRegisters' allInstrs (instr:instrs) = do
 
     where
         allocate instr a
-            | "result_save" `isPrefixOf` a || "result_temp" `isPrefixOf` a = do
+            | "result_save" `isPrefixOf` a ||
+              "result_temp" `isPrefixOf` a ||
+              "result_float" `isPrefixOf` a = do
                 exists <- registerNameExists a
 
                 reg <- if not exists then
                             if "result_save" `isPrefixOf` a then
                                 useNextRegister "s" a
+                            else if "result_float" `isPrefixOf` a then
+                                useNextRegister "f" a
                             else
                                 useNextRegister "t" a
                        else
@@ -306,7 +316,7 @@ outOfRange :: String -> Bool
 outOfRange "" = False
 outOfRange reg@(_:_) = all (`elem` ("1234567890" :: String)) (tail reg)
                     && (("s" `isPrefixOf` reg && read (tail reg) > 7) ||
-                         "t" `isPrefixOf` reg && read (tail reg) > 9)
+                        ("t" `isPrefixOf` reg && read (tail reg) > 9))
 
 handleResSave :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 handleResSave instr =

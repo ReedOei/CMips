@@ -83,9 +83,6 @@ saveData dataType dataVal = do
     modify $ set dataSections $ Data newD kd
     pure name
 
-saveStr :: String -> State Environment String
-saveStr = saveData "asciiz"
-
 useNextRegister :: String -> String -> State Environment String
 useNextRegister rtype str = do
     curRegs <- view (local . registers) <$> get

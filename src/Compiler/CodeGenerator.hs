@@ -39,31 +39,53 @@ regName reg@(c:_)
     | isAlpha c = "$" ++ reg
     | otherwise = reg
 
+twoOp :: MIPSInstruction -> String
+twoOp (Inst op a b _) = mnemonic op ++ " $" ++ a ++ ", $" ++ b
+
+labelOp :: MIPSInstruction -> String
+labelOp (Inst op a _ _) = mnemonic op ++ " " ++ a
+
+memoryOp :: MIPSInstruction -> String
+memoryOp (Inst op a b c) = mnemonic op ++ " $" ++ a ++ ", " ++ b ++ "($" ++ c ++ ")"
+
 generateInstruction :: MIPSInstruction -> String
 generateInstruction Empty = ""
 generateInstruction (Label labelName) = labelName ++ ":"
 generateInstruction (Comment comment) = "# " ++ comment
-generateInstruction (Inst funct rd rs rt) =
+generateInstruction instr@(Inst funct rd rs rt) =
     case funct of
         SYSCALL -> "syscall"
         LIT_ASM -> rd
-        OP_MOVE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs
+        OP_MOVE -> twoOp instr
         OP_LI -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs
         OP_LA -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs
         OP_LW -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
         OP_LB -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
         OP_SW -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
         OP_SB -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
-        OP_J -> mnemonic funct ++ " " ++ rd
+        OP_J -> labelOp instr
+        OP_JAL -> labelOp instr
         OP_JR -> mnemonic funct ++ " $" ++ rd
         OP_JALR -> mnemonic funct ++ " $" ++ rd
-        OP_JAL -> mnemonic funct ++ " " ++ rd
         OP_BNE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
         OP_BEQ -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
         OP_BGT -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
         OP_BGE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
         OP_BLT -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
         OP_BLE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
-        OP_NOT -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs
+        OP_NOT -> twoOp instr
+        OP_MOVS -> twoOp instr
+        OP_MTC1 -> twoOp instr
+        OP_MFC1 -> twoOp instr
+        OP_CVT_W_S -> twoOp instr
+        OP_CVT_S_W -> twoOp instr
+        OP_CEQS -> twoOp instr
+        OP_CLES -> twoOp instr
+        OP_CLTS -> twoOp instr
+        OP_BC1F -> labelOp instr
+        OP_BC1T -> labelOp instr
+        OP_SWC1 -> memoryOp instr
+        OP_LWC1 -> memoryOp instr
+        OP_LIS -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs
         _ -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ regName rt
 

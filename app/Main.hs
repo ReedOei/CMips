@@ -1,38 +1,57 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module Main where
+
+import Control.Lens (view, set, makeLenses)
 
 import Data.List (isSuffixOf)
 import Data.Maybe (fromMaybe)
+import Data.Semigroup ((<>))
 
-import System.Environment (getArgs)
-import System.Console.GetOpt
-
-import Text.ParserCombinators.Parsec
+import Options.Applicative
 
 import Compiler.Compiler
 import Compiler.CodeGenerator
+import Compiler.Types
 import Parser
 import LispParser
 import LispCompiler
 
-options :: [OptDescr String]
-options = [Option ['o'] ["output"] (ReqArg id "FILE") "output file"]
+data Args = Args
+    { _infile :: FilePath,
+      _outfile :: Maybe FilePath,
+      _optLevel :: Int }
+    deriving Show
+makeLenses ''Args
+
+argParser :: Parser Args
+argParser = Args
+    <$> argument str (help "The file to compile.")
+    <*> optional (strOption (long "output" <> short 'o' <> help "The file to write to."))
+    <*> option auto (value 1 <> short 'O' <> help "The optimization level. Currently either 0 for no optimization or positive values for maximum optimization")
+
+getArgs = execParser opts
+    where
+        opts = info (argParser <**> helper)
+                (fullDesc <>
+                 progDesc "CMips is a C and Lisp compile that outputs MIPS assembly." <>
+                 header "CMips")
 
 main :: IO ()
 main = do
     args <- getArgs
 
-    case getOpt Permute options args of
-        (o, [filename], []) -> do
-            text <- if "lisp" `isSuffixOf` filename then
-                        generateFile <$> (compile =<< (compileLisp <$> loadLispFile filename))
-                    else
-                        generateFile <$> (compile =<< loadFile filename)
+    let filename = view infile args
+    let optVal = view optLevel args
 
-            putStrLn text
+    text <- if "lisp" `isSuffixOf` filename then
+                generateFile <$> (compileWith (set optimizeLevel optVal defaultCompileOptions) =<< (compileLisp <$> loadLispFile filename))
+            else
+                generateFile <$> (compileWith (set optimizeLevel optVal defaultCompileOptions) =<< loadFile filename)
 
-            case o of
-                [] -> writeFile "a.s" text
-                [outfile] -> writeFile outfile text
-        (_, [], []) -> putStrLn "No input files provided."
-        (_, _, err) -> print err
+    putStrLn text
+
+    case view outfile args of
+        Nothing -> writeFile "a.s" text
+        Just oname -> writeFile oname text
 
