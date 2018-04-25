@@ -123,8 +123,8 @@ compileElement func@(FuncDef t funcName args statements) =
 compileElement func@(Inline t funcName args statements) = do
     (label, funcEnd) <- funcLabel funcName
 
-    pure $ Comment (readableFuncDef func) :
-           Label label :
+    pure $ Label label :
+           Comment (readableFuncDef func) :
            map (\str -> Inst LIT_ASM str "" "") statements
 
 compileElement (StructDef structName _) = pure [Comment $ "struct " ++ structName]
