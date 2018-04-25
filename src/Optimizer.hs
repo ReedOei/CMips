@@ -226,7 +226,10 @@ optimizeAlias (instr@(Inst OP_MOVE dest source _):instrs) =
     case filter (hasOperand (== dest)) instrs of
         -- Make sure there are no uses of dest across labels, jumps, or function calls.
         -- and make sure that there are no writes to source.
-        allUses@(_:_) | scopeSafe dest (instr:instrs) && not (any (hasResult source) (init (scope dest (instr:instrs)))) ->
+        allUses@(_:_) | scopeSafe dest (instr:instrs) &&
+                        -- Check that we don't write to the source, this causes an issue with the renaming
+                        -- But if the write to the source is after we're done using dest, then it doesn't matter anymore.
+                        not (any (hasResult source) (init (scope dest (instr:instrs)))) ->
             -- If it's safe, we'll just delete this move and replace the dest with the source from now on.
             optimizeAlias $ map (replaceOperand dest source) instrs
 
@@ -297,7 +300,7 @@ optimizeArgTemp (instr:instrs) =
             -- We also need to make sure that there isn't any usage of the a register as an actual argument in the scope of the temp
             -- register, otherwise we would overwrite it.
             isRegType "a" b && isRegType "result_temp" a &&
-            isNothing (find (hasOperand (== b)) (scope a (instr:instrs))) ->
+            isNothing (find (hasOperand (== b)) (init (scope a (instr:instrs)))) ->
             optimizeArgTemp $ map (replaceOperand a b) instrs
         _ -> (:) <$> pure instr <*> optimizeArgTemp instrs
 

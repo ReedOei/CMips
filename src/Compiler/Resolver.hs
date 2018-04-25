@@ -153,6 +153,9 @@ elaborateType (Type varKind t) = Type varKind <$> elaborateType t
 elaborateType t = pure t
 
 resolve :: String -> State Environment Type
+resolve "INT_MIN" = pure $ NamedType "int"
+resolve "INT_MAX" = pure $ NamedType "int"
+resolve "NULL" = pure $ Type Pointer $ NamedType "void"
 resolve refName = do
     CFile _ elements <- view file <$> get
 
