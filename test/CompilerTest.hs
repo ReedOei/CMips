@@ -45,5 +45,5 @@ compilerTests = do
     describe "floats.c" $
         it "program using floating point numbers for math, conditions, and in arrays" $ do
             (output, state) <- execute <$> (compile =<< loadFile "test-res/floats.c")
-            output `shouldBe` ["2589.8306", "5402", "45.0"]
+            output `shouldBe` ["2589.8306", "5402", "45.0", "5.0"]
 

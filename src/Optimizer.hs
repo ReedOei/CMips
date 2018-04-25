@@ -18,6 +18,7 @@ optimize = findTemp [] >=>
            -- Repeatedly apply optimizations until there are no changes in the code.
            (untilM noChange (optimizeArith [] >=>
                              optimizeResults >=>
+                             optimizeFloats >=>
                              optimizeJumps) . pure)
 
 allocate = allocateRegisters >=> handleResSave
@@ -129,6 +130,44 @@ getNext = find go
 
 optimizeResults :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeResults = optimizeUnused [] >=> optimizeArgTemp >=> optimizeIdMove >=> optimizeMovedResults >=> optimizeAlias
+
+-- | Checks the scope of a register to make sure there is no jumps, branches, calls, etc. in it.
+-- Utility for optimizing.
+scopeSafe :: String -> [MIPSInstruction] -> Bool
+scopeSafe regName instrs =
+    let s = scope regName instrs in
+        not (any isLabel s) && not (any isJump s) && not (any isCall s)
+
+-- | Counts how many times the register is used in the given instructions
+uses :: String -> [MIPSInstruction] -> Int
+uses regName = length . filter (hasOperand (== regName))
+
+-- | Optimizations related to floats, mostly related to moving to/from coprocessor registers
+optimizeFloats :: [MIPSInstruction] -> State Environment [MIPSInstruction]
+optimizeFloats = optimizeFloatMove
+
+-- | Optimize moving from, then back into float registers.
+-- Example:
+--
+-- mfc1 $t0, $f0
+-- mtc1 $t0, $f1
+--
+-- becomes:
+--
+-- mov.s $f1, $f0
+optimizeFloatMove :: [MIPSInstruction] -> State Environment [MIPSInstruction]
+optimizeFloatMove [] = pure []
+optimizeFloatMove (instr@(Inst OP_MFC1 dest source _):instrs) =
+    case find moveTo instrs of
+        Just moveToInst@(Inst OP_MTC1 _ finalDest _)
+            | scopeSafe dest (instr:instrs) && uses dest (instr:instrs) == 1 ->
+                prependA (Inst OP_MOVS finalDest source "") $ optimizeFloatMove $ filter (/= moveToInst) instrs
+        _ -> prependA instr $ optimizeFloatMove instrs
+
+    where
+        moveTo (Inst OP_MTC1 moveSource _ _) = moveSource == dest
+        moveTo _ = False
+optimizeFloatMove (i:instrs) = prependA i $ optimizeFloatMove instrs
 
 -- | Optimize a move into a destination, when the destination is only used once.
 -- Example:
@@ -257,7 +296,9 @@ findTemp examined (instr:instrs) = do
     where
         go instr a
             -- No JALs or JALRs here, so safe to just use temp for this.
-            | isNothing (find isCall (scope a (instr:instrs))) && "result_save" `isPrefixOf` a = do
+            -- Check for init scope because if the very last instruction is jalr $t0, and we don't need t0 after that, then it's fine to use
+            -- a temp for that.
+            | isNothing (find isCall (init (scope a (instr:instrs)))) && "result_save" `isPrefixOf` a = do
                     ref <- getRegRef a
                     newReg <- useNextRegister "result_temp" ref
                     freeRegister a -- We aren't using this anymore.

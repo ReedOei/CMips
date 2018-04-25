@@ -14,12 +14,12 @@ import Simulator
 import Optimizer
 import MIPSLanguage
 
-faster program expected = do
+faster program = do
     (outputNoOpt, stateNoOpt) <- execute <$> (compileWith (set optimizeLevel 0 defaultCompileOptions) =<< program)
-    outputNoOpt `shouldBe` expected
 
     (outputOpt, stateOpt) <- execute <$> (compileWith (set optimizeLevel 1 defaultCompileOptions) =<< program)
-    outputOpt `shouldBe` expected
+
+    outputNoOpt `shouldBe` outputOpt
 
     let noOptTime = view executed stateNoOpt
     let optTime = view executed stateOpt
@@ -46,17 +46,17 @@ optimizerTests = do
 
     describe "optimize" $ do
         it "improves the speed but doesn't change the result of func.c" $
-            fasterC "test-res/func.c" ["200"]
+            fasterC "test-res/func.c"
         it "improves the speed but doesn't change the result of malloc.c" $
-            fasterC "test-res/malloc.c" ["285"]
+            fasterC "test-res/malloc.c"
         it "improves the speed but doesn't change the result of optimize.c" $
-            fasterC "test-res/optimize.c" ["3720"]
+            fasterC "test-res/optimize.c"
         it "improves the speed but doesn't change the result of recursive.c" $
-            fasterC "test-res/recursive.c" ["222"]
+            fasterC "test-res/recursive.c"
         it "improves the speed but doesn't change the result of resolve-constants.c" $
-            fasterC "test-res/resolve-constants.c" ["12376"]
+            fasterC "test-res/resolve-constants.c"
         it "improves the speed but doesn't change the result of example.lisp" $
-            faster (compileLisp <$> loadLispFile "test-res/example.lisp") ["[2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97]"]
+            faster (compileLisp <$> loadLispFile "test-res/example.lisp")
         it "improves the speed but doesn't change the result of floats.c" $
-            fasterC "test-res/floats.c" ["2589.8306", "5402", "45.0"]
+            fasterC "test-res/floats.c"
 

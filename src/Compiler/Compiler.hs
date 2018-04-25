@@ -575,13 +575,19 @@ compileExpressionTemp (FuncCall "sizeof" [arg]) = compileSizeof arg
 -- compileExpressionTemp (FuncCall "free" [arg]) = compileFree arg -- TODO: Figure this out.
 
 compileExpressionTemp (FuncCall funcName args) = do
+    fType <- resolveFuncType funcName
+
+    let argTypes = case fType of
+                        Just (_, as) -> as
+                        Nothing -> error $ "Undefined reference to: '" ++ funcName ++ "', can't get argument types!"
+
     let go (curRegs, curInstr) expr = do
             (reg, newInstr) <- compileExpressionTemp expr
             pure (curRegs ++ [reg], curInstr ++ newInstr)
 
     (regs, instr) <- foldM go ([], []) args
 
-    let argLoading = map (\(i, r) -> Inst OP_MOVE ("a" ++ show i) r "") $ zip [0..] regs
+    argLoading <- concat <$> zipWithM doArgConvert (zip [0..] argTypes) (zip regs args)
 
     res <- getFuncLabel funcName
     retVal <- useNextRegister "result_save" "func_call_return_val"
@@ -595,6 +601,13 @@ compileExpressionTemp (FuncCall funcName args) = do
     pure (retVal,
              instr ++ argLoading ++ [jumpOp] ++
              [Inst OP_MOVE retVal "v0" ""]) -- Make sure to save func call result.
+
+    where
+        doArgConvert (i, argType) (source, sourceExpr) = do
+            sourceType <- resolveType sourceExpr >>= elaborateType
+
+            let argReg = "a" ++ show i
+            convert (source, sourceType) (argReg, argType)
 
 compileExpressionTemp i = error $ "Not implemented: " ++ show i
 

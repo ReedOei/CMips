@@ -85,11 +85,38 @@ getStructOffset expr member = do
 
     structOffset structDef member
 
+getCurrentFunction :: State Environment CElement
+getCurrentFunction = do
+    curFuncName <- view (global.curFunc) <$> get
+    fromMaybe (error ("Currently in function '" ++ curFuncName ++ "' but this function does not seem to exist.")) <$>
+        resolveFuncCall curFuncName
+
 resolveFuncCall :: String -> State Environment (Maybe CElement)
 resolveFuncCall funcName = do
     CFile _ elements <- view file <$> get
 
     pure $ findFuncCall funcName elements
+
+-- | Resolves a function call by name for the current scope, and returns the return type/argument types.
+resolveFuncType :: String -> State Environment (Maybe (Type, [Type]))
+resolveFuncType funcName = do
+    CFile _ elements <- view file <$> get
+
+    case findFuncCall funcName elements of
+        Just (FuncDef retType _ args _) ->
+            Just <$> makeFuncType retType (map (\(Var varType _) -> varType) args)
+        -- Possible function pointer, see if it's a local variable name.
+        Nothing -> do
+            def <- getCurrentFunction
+
+            case find (fPointer funcName) $ getLocalVariables def of
+                Nothing -> pure Nothing
+                Just (Var (FunctionPointer retType argTypes) _) -> Just <$> makeFuncType retType argTypes
+    where
+        makeFuncType retType argTypes = (,) <$> elaborateType retType <*> mapM elaborateType argTypes
+
+        fPointer name (Var (FunctionPointer _ _) varName) = name == varName
+        fPointer _ _ = False
 
 elaborateTypesVar :: Var -> State Environment Var
 elaborateTypesVar (Var varType varName) = Var <$> elaborateType varType <*> pure varName
@@ -125,11 +152,19 @@ elaborateType (Type Value t) = elaborateType t
 elaborateType (Type varKind t) = Type varKind <$> elaborateType t
 elaborateType t = pure t
 
-resolve :: String -> State Environment Var
+resolve :: String -> State Environment Type
 resolve refName = do
     CFile _ elements <- view file <$> get
-    pure $ fromMaybe (error ("Unknown reference to: " ++ refName)) $
-                find (\(Var _ varName) -> varName == refName) $ concatMap findTypesElement elements
+
+    case find (\(Var _ varName) -> varName == refName) $ concatMap findTypesElement elements of
+        Just (Var varType _) -> pure varType
+        -- Could be a function name.
+        Nothing -> do
+            fType <- resolveFuncType refName
+
+            case fType of
+                Just (retType, argTypes) -> pure $ FunctionPointer retType argTypes
+                Nothing -> error $ "Unknown reference to ref: " ++ refName
 
 -- Won't be 100% accurate for the scope, but it should be "good enough"
 getVars :: CStatement -> [Var]
@@ -145,7 +180,7 @@ getLocalVariables :: CElement -> [Var]
 getLocalVariables (FuncDef retType name args body) = args ++ concatMap getVars body
 
 resolveType :: CExpression -> State Environment Type
-resolveType (VarRef str) = resolve str >>= (\(Var varType _) -> pure varType)
+resolveType (VarRef str) = resolve str
 resolveType (LitInt n) = pure $ NamedType "int"
 resolveType (LitChar n) = pure $ NamedType "char"
 resolveType (LitFloat _) = pure $ NamedType "float"
@@ -165,24 +200,11 @@ resolveType (CPostfix _ expr) = resolveType expr
 resolveType (FuncCall "malloc" _) = pure $ Type Pointer $ NamedType "void"
 resolveType (FuncCall "printf" _) = pure $ NamedType "void"
 resolveType (FuncCall funcName _) = do
-    f <- resolveFuncCall funcName
+    fType <- resolveFuncType funcName
 
-    case f of
-        Just (FuncDef t _ _ _ ) -> pure t
-        -- Possible function pointer, see if it's a local variable name.
-        Nothing -> do
-            curFuncName <- view (global.curFunc) <$> get
-            curFuncDef <- resolveFuncCall curFuncName
-
-            case curFuncDef of
-                Nothing -> error $ "Currently in function '" ++ curFuncName ++ "' but this function does not seem to exist."
-                Just def ->
-                    case find (fPointer funcName) $ getLocalVariables def of
-                        Nothing -> error $ "Undefined reference to function: '" ++ show funcName ++ "'"
-                        Just (Var (FunctionPointer retType _) _) -> pure retType
-    where
-        fPointer name (Var (FunctionPointer _ _) varName) = name == varName
-        fPointer _ _ = False
+    case fType of
+        Nothing -> error $ "Undefined reference to function: '" ++ show funcName ++ "'"
+        Just (retType, _) -> pure retType
 
 resolveType (MemberAccess accessExpr (VarRef name)) = do
     accessType <- resolveType accessExpr

@@ -20,6 +20,10 @@ float sum(float *arr, int len) {
     return result;
 }
 
+float h(float x, float y) {
+    return x + y;
+}
+
 int main() {
     printf("%f\n", f(9.4));
 
@@ -34,6 +38,8 @@ int main() {
     }
 
     printf("%f\n", sum(arr, 10));
+
+    printf("%f\n", h(1, 4));
 
     return 0;
 }
