@@ -8,6 +8,7 @@ import Control.Monad
 
 import Data.List (tails)
 import Data.Maybe (isJust, maybe)
+import Data.String.Utils (replace)
 
 import Text.ParserCombinators.Parsec
 import Text.Parsec.Expr
@@ -410,7 +411,11 @@ charParser = do
     pure $ LitChar c
 
 stringParser :: CharParser st CExpression
-stringParser = LitString <$> between (char '"') (char '"') (many $ noneOf "\"")
+stringParser = do
+    str <- between (char '"') (char '"') (many (noneOf "\""))
+
+    -- Make sure escaped sequences aren't TOO escaped.
+    pure $ LitString $ replace "\\\\" "\\" $ replace "\\n" "\n" str
 
 arrayAccessOperator = Postfix parser
     where parser = try $ do

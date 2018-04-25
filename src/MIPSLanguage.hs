@@ -61,8 +61,8 @@ data MIPSOp = OP_ADD
             | OP_CLTS -- Set code to 1 if less than
             | OP_BC1F -- Branch if code == 0
             | OP_BC1T -- Branch if code == 1
-            | OP_LWC1 -- Load single
-            | OP_SWC1 -- Store single
+            | OP_LS -- Load single
+            | OP_SS -- Store single
             | OP_LIS -- Load immediate single.
     deriving (Show, Eq)
 
@@ -74,7 +74,7 @@ opList = [OP_ADD, OP_MOVE, OP_LI, OP_LA, OP_MUL,
           OP_REM, OP_NOT, SYSCALL, OP_ADDS, OP_MULS,
           OP_SUBS, OP_MOVS, OP_MTC1, OP_MFC1, OP_CVT_W_S,
           OP_CVT_S_W, OP_CEQS, OP_CLES, OP_CLTS, OP_BC1F,
-          OP_BC1T, OP_LWC1, OP_SWC1, OP_LIS]
+          OP_BC1T, OP_LS, OP_SS, OP_LIS]
 
 isLabel (Label _) = True
 isLabel _ = False
@@ -123,8 +123,8 @@ mnemonic OP_CLES = "c.le.s"
 mnemonic OP_CLTS = "c.lt.s"
 mnemonic OP_BC1F = "bc1f"
 mnemonic OP_BC1T = "bc1t"
-mnemonic OP_SWC1 = "swc1"
-mnemonic OP_LWC1 = "lwc1"
+mnemonic OP_SS = "s.s"
+mnemonic OP_LS = "l.s"
 mnemonic OP_LIS = "li.s"
 
 opFindFloat :: BinaryOp -> MIPSOp
@@ -211,6 +211,13 @@ isArith (Inst OP_SLL _ _ _) = True
 isArith (Inst OP_SRL _ _ _) = True
 isArith _ = False
 
+isArithFloat :: MIPSInstruction -> Bool
+isArithFloat (Inst OP_SUBS _ _ _) = True
+isArithFloat (Inst OP_DIVS _ _ _) = True
+isArithFloat (Inst OP_ADDS _ _ _) = True
+isArithFloat (Inst OP_MULS _ _ _) = True
+isArithFloat _ = False
+
 commutes OP_MUL = True
 commutes OP_ADD = True
 commutes OP_AND = True
@@ -230,6 +237,12 @@ compute OP_REM = mod
 compute OP_SRL = shiftR
 compute OP_SLL = shiftL
 
+computeFloat :: MIPSOp -> Float -> Float -> Float
+computeFloat OP_SUBS = (-)
+computeFloat OP_DIVS = (/)
+computeFloat OP_ADDS = (+)
+computeFloat OP_MULS = (*)
+
 isBranch (Inst OP_BNE _ _ _) = True
 isBranch (Inst OP_BEQ _ _ _) = True
 isBranch (Inst OP_BGT _ _ _) = True
@@ -237,6 +250,11 @@ isBranch (Inst OP_BGE _ _ _) = True
 isBranch (Inst OP_BLT _ _ _) = True
 isBranch (Inst OP_BLE _ _ _) = True
 isBranch _ = False
+
+isBranchFloat (Inst OP_CEQS _ _ _) = True
+isBranchFloat (Inst OP_CLES _ _ _) = True
+isBranchFloat (Inst OP_CLTS _ _ _) = True
+isBranchFloat _ = False
 
 isJump (Inst OP_BNE _ _ _) = True
 isJump (Inst OP_BEQ _ _ _) = True
@@ -256,6 +274,10 @@ checkBranch OP_BGT = (>)
 checkBranch OP_BGE = (>=)
 checkBranch OP_BLT = (<)
 checkBranch OP_BLE = (<=)
+
+checkBranchFloat OP_CEQS = (==)
+checkBranchFloat OP_CLES = (<=)
+checkBranchFloat OP_CLTS = (<)
 
 instResult :: MIPSInstruction -> Maybe String
 instResult (Inst OP_ADD a _ _) = Just a
@@ -283,7 +305,7 @@ instResult (Inst OP_MTC1 _ b _) = Just b
 instResult (Inst OP_MFC1 a _ _) = Just a
 instResult (Inst OP_CVT_W_S a _ _) = Just a
 instResult (Inst OP_CVT_S_W a _ _) = Just a
-instResult (Inst OP_LWC1 a _ _) = Just a
+instResult (Inst OP_LS a _ _) = Just a
 instResult (Inst OP_LIS a _ _) = Just a
 instResult _ = Nothing
 
@@ -322,8 +344,8 @@ instUses (Inst OP_CVT_S_W _ b _) = [b]
 instUses (Inst OP_CEQS a b _) = [a,b]
 instUses (Inst OP_CLES a b _) = [a,b]
 instUses (Inst OP_CLTS a b _) = [a,b]
-instUses (Inst OP_LWC1 _ _ c) = [c]
-instUses (Inst OP_SWC1 a _ c) = [a,c]
+instUses (Inst OP_LS _ _ c) = [c]
+instUses (Inst OP_SS a _ c) = [a,c]
 
 -- Unlist insturctions are assumed to use all of their registers.
 instUses (Inst _ a b c) = [a, b, c]

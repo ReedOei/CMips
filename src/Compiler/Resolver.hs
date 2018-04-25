@@ -9,6 +9,7 @@ import Data.Ord (comparing)
 
 import CLanguage
 import Compiler.Types
+import MIPSLanguage
 
 import System.IO.Unsafe
 
@@ -161,6 +162,8 @@ resolveType (CPrefix _ expr) = resolveType expr
 
 resolveType (CArrayAccess accessExpr _) = resolveType $ CPrefix Dereference accessExpr
 resolveType (CPostfix _ expr) = resolveType expr
+resolveType (FuncCall "malloc" _) = pure $ Type Pointer $ NamedType "void"
+resolveType (FuncCall "printf" _) = pure $ NamedType "void"
 resolveType (FuncCall funcName _) = do
     f <- resolveFuncCall funcName
 
@@ -209,10 +212,39 @@ resolveType expr = error $ "Unexpected expression type: " ++ show expr
 isNumericType :: Type -> Bool
 isNumericType (NamedType name) = "float" `isInfixOf` name || "int" `isInfixOf` name || "long" `isInfixOf` name || "char" `isInfixOf` name
 isNumericType (Type Value t) = isNumericType t
+isNumericType (Type Pointer t) = True
 isNumericType _ = False
 
 getPriorityType :: Type -> Type -> Type
 getPriorityType t@(NamedType "float") _ = t
 getPriorityType _ t@(NamedType "float") = t
 getPriorityType t _ = t
+
+isIntegral :: Type -> Bool
+isIntegral (NamedType name) = "unsigned" `isInfixOf` name || "int" `isInfixOf` name || "long" `isInfixOf` name || "char" `isInfixOf` name
+isIntegral _ = False
+
+isFloating :: Type -> Bool
+isFloating (NamedType "float") = True
+isFloating _ = False
+
+convertFloatToInt :: String -> String -> State Environment [MIPSInstruction]
+convertFloatToInt source dest = do
+    tempFloat <- useNextRegister "result_float" "temp_float_to_int"
+    pure [Inst OP_MTC1 source tempFloat "",
+          Inst OP_CVT_W_S tempFloat tempFloat "",
+          Inst OP_MFC1 dest tempFloat ""]
+
+convertIntToFloat :: String -> String -> State Environment [MIPSInstruction]
+convertIntToFloat source dest = do
+    tempFloat <- useNextRegister "result_float" "temp_int_to_float"
+    pure [Inst OP_MTC1 source tempFloat "",
+          Inst OP_CVT_S_W tempFloat tempFloat "",
+          Inst OP_MFC1 dest tempFloat ""]
+
+convert :: (String, Type) -> (String, Type) -> State Environment [MIPSInstruction]
+convert (source, sourceType) (dest, destType)
+    | isIntegral sourceType && isFloating destType = convertIntToFloat source dest
+    | isIntegral destType && isFloating sourceType =  convertFloatToInt source dest
+    | otherwise = pure [Inst OP_MOVE dest source ""]
 

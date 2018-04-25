@@ -29,6 +29,7 @@ dependencies:
 - MissingH
 - lens
 - optparse-applicative
+- floating-bits
 
 library:
   source-dirs: src

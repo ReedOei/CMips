@@ -2,6 +2,7 @@ module MIPSParser where
 
 import Data.List (find)
 import Data.Maybe (fromMaybe, catMaybes)
+import Data.String.Utils (replace)
 
 import Text.ParserCombinators.Parsec
 
@@ -56,7 +57,9 @@ sectionElement = do
     wsSkip
 
     dataVal <- case dataType of
-                "asciiz" -> between (wsSkip >> char '\"') (char '\"' >> wsSkip) $ many $ noneOf "\n\""
+                "asciiz" -> do
+                    str <- between (wsSkip >> char '\"') (char '\"' >> wsSkip) $ many $ noneOf "\n\""
+                    pure $ replace "\\\\" "\\" $ replace "\\n" "\n" str
                 _ -> many $ noneOf "\n"
 
     pure (name, dataType, dataVal)

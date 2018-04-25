@@ -84,8 +84,8 @@ generateInstruction instr@(Inst funct rd rs rt) =
         OP_CLTS -> twoOp instr
         OP_BC1F -> labelOp instr
         OP_BC1T -> labelOp instr
-        OP_SWC1 -> memoryOp instr
-        OP_LWC1 -> memoryOp instr
+        OP_SS -> memoryOp instr
+        OP_LS -> memoryOp instr
         OP_LIS -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs
         _ -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ regName rt
 

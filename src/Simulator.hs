@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Simulator where
 
@@ -6,7 +7,8 @@ import Control.Lens (makeLenses, view, set, over)
 import Control.Monad.State
 
 import Data.Bits
-import Data.List (findIndex)
+import Data.Bits.Floating
+import Data.List (findIndex, isInfixOf)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, listToMaybe, isJust, isNothing)
@@ -19,6 +21,8 @@ import System.IO.Unsafe
 
 data MIPSEnv = MIPSEnv
     { _registers :: Map String Int
+    , _floatRegisters :: Map String Int -- Holds bit representation of float.
+    , _floatCode :: Bool
     , _memory :: Map Int Int
     , _instrs :: [MIPSInstruction]
     , _labels :: Map String Int
@@ -41,6 +45,9 @@ emptyRegisters = Map.fromList $ ("0", 0) : ("sp", 2147483647) : ("ra", 214748364
         tempRegs = map (("t" ++) . show) [0..9]
         saveRegs = map (("s" ++) . show) [0..7]
 
+emptyFloatRegisters :: Map String Int
+emptyFloatRegisters = Map.fromList $ map (\i -> ("f" ++ show i, fromIntegral $ coerceToWord (0.0 :: Float))) [0..31]
+
 makeConstants :: MIPSSection -> State MIPSEnv ()
 makeConstants (MIPSSection "data" items) = mapM_ go items
     where
@@ -59,7 +66,7 @@ makeEnv :: MIPSFile -> MIPSEnv
 makeEnv (MIPSFile fname sections blocks) = execState (mapM_ makeConstants sections) baseState
     where
         -- Heap starts at 1 because NULL is 0.
-        baseState = MIPSEnv emptyRegisters Map.empty instrs labels 0 1 Map.empty Map.empty 0
+        baseState = MIPSEnv emptyRegisters emptyFloatRegisters False Map.empty instrs labels 0 1 Map.empty Map.empty 0
         instrs = concat blocks
         labels = Map.fromList $ map (\(Label name, i) -> (name, i)) $ filter (isLabel . fst) $ zip instrs [0..]
 
@@ -101,8 +108,21 @@ registerValue :: String -> State MIPSEnv Int
 registerValue regName =
     fromMaybe (error ("Unknown register: " ++ regName)) . Map.lookup regName . view registers <$> get
 
+setRegisterValue :: String -> Int -> State MIPSEnv ()
+setRegisterValue regName val = modify $ over registers (Map.insert regName val)
+
+registerValueF :: String -> State MIPSEnv Int
+registerValueF regName =
+    fromMaybe (error ("Unknown float register: " ++ regName)) . Map.lookup regName . view floatRegisters <$> get
+
+setRegisterValueF :: String -> Int -> State MIPSEnv ()
+setRegisterValueF regName val = modify $ over floatRegisters (Map.insert regName val)
+
 isNum :: String -> Bool
 isNum = all (`elem` ("1234567890" :: String))
+
+isFloat :: String -> Bool
+isFloat = all (`elem` ("1234567890." :: String))
 
 regOrNum :: String -> State MIPSEnv Int
 regOrNum regName = do
@@ -112,8 +132,13 @@ regOrNum regName = do
         Nothing | isNum regName -> pure $ read regName
         _ -> error $ "Unknown register or non-numeric immediate: " ++ regName
 
-setRegisterValue :: String -> Int -> State MIPSEnv ()
-setRegisterValue regName val = modify $ over registers (Map.insert regName val)
+regOrFloat :: String -> State MIPSEnv Int
+regOrFloat regName = do
+    regVal <- Map.lookup regName . view floatRegisters <$> get
+    case regVal of
+        Just x -> pure x
+        Nothing | isFloat regName -> pure $ fromIntegral $ coerceToWord (read regName :: Float)
+        _ -> error $ "Unknown float register or non-numeric immediate: " ++ regName
 
 saveMemory :: Int -> Int -> State MIPSEnv ()
 saveMemory address val = modify (over memory (Map.insert address val))
@@ -174,6 +199,19 @@ executeInstr (Just (instr@(Inst op a b c))) = do
         OP_JAL -> executeInstr =<< jumpLink =<< labelDest a
         OP_JALR -> executeInstr =<< jumpLink =<< registerValue a
 
+        OP_BC1F -> do
+            t <- view floatCode <$> get
+            if not t then
+                executeInstr =<< jump =<< labelDest a
+            else
+                executeInstr =<< next
+        OP_BC1T -> do
+            t <- view floatCode <$> get
+            if t then
+                executeInstr =<< jump =<< labelDest a
+            else
+                executeInstr =<< next
+
         OP_LW -> do
             setRegisterValue a =<< loadMemory =<< ((read b +) <$> registerValue c)
 
@@ -181,17 +219,6 @@ executeInstr (Just (instr@(Inst op a b c))) = do
         OP_LB -> modifyAndRun (setRegisterValue a =<< loadMemory =<< ((read b +) <$> registerValue c))
 
         OP_SW -> do
-            -- if a == "ra" then do
-            --     regs <- view registers <$> get
-            --     unsafePerformIO $ do
-            --         print regs
-            --         pure $ modify id
-            --     regs <- view memory <$> get
-            --     unsafePerformIO $ do
-            --         print regs
-            --         pure $ modify id
-            -- else
-            --     pure ()
             join (saveMemory <$> ((read b +) <$> registerValue c) <*> registerValue a)
             executeInstr =<< next
         OP_SB -> modifyAndRun (join (saveMemory <$> ((read b +) <$> registerValue c) <*> registerValue a))
@@ -199,6 +226,26 @@ executeInstr (Just (instr@(Inst op a b c))) = do
         OP_LI -> modifyAndRun (setRegisterValue a (read b))
         OP_MOVE -> modifyAndRun (setRegisterValue a =<< registerValue b)
         OP_NOT -> modifyAndRun (setRegisterValue a =<< (complement <$> registerValue b))
+
+        OP_MOVS -> modifyAndRun (setRegisterValueF a =<< registerValueF b)
+        OP_MTC1 -> modifyAndRun (setRegisterValueF b =<< registerValue a)
+        OP_MFC1 -> modifyAndRun (setRegisterValue a =<< registerValueF b)
+        OP_CVT_W_S -> do
+            bitVal <- coerceToFloat . fromIntegral <$> registerValueF b
+            modifyAndRun (setRegisterValueF a (floor (bitVal :: Float)))
+        OP_CVT_S_W -> do
+            floatVal <- fromIntegral <$> registerValueF b
+            let intVal = fromIntegral $ coerceToWord (floatVal :: Float) :: Int
+            modifyAndRun (setRegisterValueF a intVal)
+
+        OP_LIS -> modifyAndRun (setRegisterValueF a (fromIntegral (coerceToWord (read b :: Float))))
+
+        OP_LS -> do
+            oldVal <- loadMemory =<< ((read b +) <$> registerValue c)
+            modifyAndRun $ setRegisterValueF a oldVal
+
+        OP_SS -> modifyAndRun (join (saveMemory <$> ((read b +) <$> registerValue c) <*> registerValueF a))
+
 
         OP_LA -> do
             -- Figure out what kind of thing it is.
@@ -233,6 +280,11 @@ executeInstr (Just (instr@(Inst op a b c))) = do
                                 str <- loadString =<< registerValue "a0"
                                 pure [str]
 
+                            2 -> do
+                                -- print float
+                                v :: Float <- coerceToFloat . fromIntegral <$> registerValueF "f12"
+                                pure [show v]
+
                             1 -> do
                                 -- print it.
                                 v <- show <$> registerValue "a0"
@@ -249,7 +301,17 @@ executeInstr (Just (instr@(Inst op a b c))) = do
             else
                 executeInstr =<< next
 
+        _ | isBranchFloat instr -> do
+            t <- checkBranchFloat op <$> registerValueF a <*> regOrFloat b
+
+            modifyAndRun $ modify $ set floatCode t
+
         _ | isArith instr -> modifyAndRun (setRegisterValue a =<< (compute op <$> registerValue b <*> regOrNum c))
+        _ | isArithFloat instr -> do
+            bVal <- coerceToFloat . fromIntegral <$> registerValueF b
+            cVal <- coerceToFloat . fromIntegral <$> registerValueF c
+
+            modifyAndRun (setRegisterValueF a (fromIntegral (coerceToWord (computeFloat op bVal cVal))))
 executeInstr _ = do
     modify $ over executed (+ 1)
     executeInstr =<< next

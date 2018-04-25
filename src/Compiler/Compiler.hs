@@ -7,7 +7,7 @@ import Control.Monad
 import Control.Monad.State
 
 import Data.Char (ord)
-import Data.List (isPrefixOf, find, findIndex, intersperse, (\\), nub)
+import Data.List (isInfixOf, isPrefixOf, find, findIndex, intersperse, (\\), nub)
 import Data.List.Split (splitOn)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -217,7 +217,7 @@ compileStatement st@(VarDef (Var FunctionPointer{} varName) ini) = do
         Nothing -> pure [Empty, Comment (readable st)]
 
 compileStatement (VarDef (Var (NamedType name) varName) ini) = compileStatement (VarDef (Var (Type Value (NamedType name)) varName) ini)
-compileStatement st@(VarDef (Var (Type varKind typeName) varName) ini) = do
+compileStatement st@(VarDef (Var t@(Type varKind typeName) varName) ini) = do
     reg <- useNextRegister "result_save" varName
 
     case ini of
@@ -226,7 +226,13 @@ compileStatement st@(VarDef (Var (Type varKind typeName) varName) ini) = do
         Just (LitInt n) -> pure [Empty, Comment (readable st), Inst OP_LI reg (show n) ""]
         Just initializer -> do
             (source, instructions) <- compileExpression initializer
-            pure $ Empty : Comment (readable st) : instructions ++ [Inst OP_MOVE reg source ""]
+
+            varType <- elaborateType t
+            initType <- resolveType initializer >>= elaborateType
+
+            convertInstr <- convert (source, initType) (reg, varType)
+
+            pure $ Empty : Comment (readable st) : instructions ++ convertInstr
 
 
 compileStatement ifStatement@IfStatement{} = do
@@ -258,29 +264,39 @@ compileStatement st@(Return expr) = do
                     Nothing -> error "Unknown current function"
                     Just (_, endLabel) -> endLabel
 
-    pure $ Empty : Comment (readable st) : instr ++ [Inst OP_MOVE "v0" source "", Inst OP_J funcEnd "" ""]
+    Just (FuncDef t _ _ _) <- resolveFuncCall =<< getCurFunc
 
-compileStatement st@(Assign assignKind lhs rhs) = do
+    retType <- elaborateType t
+    exprType <- resolveType expr >>= elaborateType
+
+    convertInstr <- convert (source, exprType) ("v0", retType)
+
+    pure $ Empty : Comment (readable st) : instr ++ convertInstr ++ [Inst OP_J funcEnd "" ""]
+
+compileStatement (Assign (Just op) lhs rhs) = compileStatement $ Assign Nothing lhs (CBinaryOp op lhs rhs)
+compileStatement st@(Assign Nothing lhs rhs) = do
+    lhsType <- resolveType lhs >>= elaborateType
+    rhsType <- resolveType rhs >>= elaborateType
+
     (source, instr) <- compileExpression rhs
 
     (reg, accessInstr, postAccessInstr) <- do
-            let assignOp x r = case assignKind of
-                                Nothing -> [Inst OP_MOVE x source ""]
-                                Just op -> [Inst (opFind op) x r source]
-
             (reg, instr) <- compileExpression lhs
 
             if not $ null instr then
                 case last instr of
                     Inst OP_LW target offset loadSource -> do
                         tempReg <- useNextRegister "result_save" "temp_load"
-                        pure (tempReg, init instr, assignOp tempReg target ++ [Inst OP_SW tempReg offset loadSource])
+                        assign <- convert (source, rhsType) (tempReg, lhsType)
+                        pure (tempReg, init instr, assign ++ [Inst OP_SW tempReg offset loadSource])
                     Inst OP_LB target offset loadSource -> do
                         tempReg <- useNextRegister "result_save" "temp_load"
-                        pure (tempReg, init instr, assignOp tempReg target ++ [Inst OP_SB tempReg offset loadSource])
+                        assign <- convert (source, rhsType) (tempReg, lhsType)
+                        pure (tempReg, init instr, assign ++ [Inst OP_SB tempReg offset loadSource])
                     inst -> error $ "Unexpected instruction for assign expression: " ++ show st ++ " " ++ show inst
-            else
-                pure (reg, [], assignOp reg reg)
+            else do
+                assign <- convert (source, rhsType) (reg, lhsType)
+                pure (reg, [], assign)
 
     pure $ Empty : Comment (readable st) : accessInstr ++ instr ++ postAccessInstr
 
@@ -568,7 +584,7 @@ compileMalloc expr = do
 compilePrintf :: [CExpression] -> State Environment [MIPSInstruction]
 compilePrintf (LitString formatStr:args) = do
     -- Split up the format string and find the things we need to insert (only strings and integers for now).
-    let elements = concatMap (intersperse "%d" . splitOn "%d") $ intersperse "%s" $ splitOn "%s" formatStr
+    let elements = concatMap (intersperse "%f" . splitOn "%f") $ concatMap (intersperse "%d" . splitOn "%d") $ intersperse "%s" $ splitOn "%s" formatStr
 
     (_, instr) <- foldM go (args, []) elements
     pure instr
