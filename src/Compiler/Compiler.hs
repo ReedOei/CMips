@@ -149,8 +149,16 @@ compileCondition trueLabel falseLabel st@(CBinaryOp And a b) =  do
     pure $ aInstr ++ bInstr ++ [Inst OP_J trueLabel "" ""]
 
 compileCondition trueLabel falseLabel st@(CBinaryOp Or a b) = do
-    aInstr <- compileCondition trueLabel "" a
-    bInstr <- compileCondition trueLabel "" b
+    aInstr <-
+        case a of
+            CBinaryOp Or _ _ -> compileCondition trueLabel falseLabel a
+            CBinaryOp And _ _ -> compileCondition trueLabel falseLabel a
+            _ -> compileCondition trueLabel "" a
+    bInstr <-
+        case b of
+            CBinaryOp Or _ _ -> compileCondition trueLabel falseLabel b
+            CBinaryOp And _ _ -> compileCondition trueLabel falseLabel b
+            _ -> compileCondition trueLabel "" b
 
     pure $ aInstr ++ bInstr ++ [Inst OP_J falseLabel "" ""]
 
