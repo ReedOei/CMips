@@ -40,5 +40,4 @@ mips int getVelocity() {
 # TODO
 
 - Support more preprocessor directives. Currently only `#include` is supported.
-- Support floating point numbers.
 
