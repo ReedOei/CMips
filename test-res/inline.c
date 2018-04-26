@@ -34,7 +34,7 @@ int m(int y, int z) {
     int k = j+i+h;
     int l = j*k-a*c;
     int m = k*l-e+f;
-    return a/b*c/d*e/f*g/h+i-j;
+    return a/b*c/d*e/f*g/h+i-j + k + l + m;
 }
 
 int main() {

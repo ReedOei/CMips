@@ -108,6 +108,15 @@ freeRegister name = do
     else
         pure ()
 
+
+regList = "0" : "sp" : "ra" : ["at", "v0", "v1"] ++ argRegs ++ tempRegs ++ saveRegs ++ ["k0", "k1", "gp", "fp"]
+    where
+        argRegs = map (("a" ++) . show) [0..3]
+        tempRegs = map (("t" ++) . show) [0..9]
+        saveRegs = map (("s" ++) . show) [0..7]
+isRegister :: String -> Bool
+isRegister r = r `elem` regList
+
 isRegType :: String -> String -> Bool
 isRegType rtype reg = rtype `isPrefixOf` reg && all (`elem` ("1234567890" :: String)) (drop (length rtype) reg)
 

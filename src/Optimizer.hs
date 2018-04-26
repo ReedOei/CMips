@@ -127,7 +127,7 @@ optimizeInlining prevInstr (instr@(Inst OP_JAL funcLabel _ _):instrs) = do
         -- Can't do it if there are saved registers, calls, or stack management.
         inlinable instr@(Inst op a b c)
             | isCall instr = False
-            | otherwise = all (\r -> r /= "sp" && not ("s" `isPrefixOf` r)) [a,b,c]
+            | otherwise = all (\r -> r /= "sp" && not (isRegType "s" r)) [a,b,c]
         inlinable instr@(Label labelName) = labelName == funcLabel
         inlinable _ = True
 
@@ -429,10 +429,10 @@ optimizeUnused prev (instr:instrs) =
         _ -> case instResult instr of
                 Just regName
                 -- If this register isn't used and no calls, just loaded (can happen with inlining), then ignore it.
-                            --  let ws = nextWriteScope regName in
-                            --    (isRegType "v" regName || isRegType "a" regName) &&
-                            --    not (any isCall ws || any isJump ws || any isLabel ws) &&
-                            --    not (any (hasOperand (== regName)) ws) -> optimizeUnused prev instrs
+                             -- let ws = nextWriteScope regName in
+                             --   (isRegType "v" regName || isRegType "a" regName) &&
+                             --   not (any isCall ws || any isJump ws || any isLabel ws) &&
+                             --   not (any (hasOperand (== regName)) ws) -> optimizeUnused prev instrs
                 -- By default, v, a, and result_float registers are always assumed used.
                              | isRegType "v" regName ||
                                isRegType "a" regName ||
@@ -441,7 +441,7 @@ optimizeUnused prev (instr:instrs) =
 
                 -- Look at everything but this instruction (but obviously this instruction is relevant to itself)
                 Just regName | regName `notElem` nub (concatMap instUses (prev ++ instrs)) -> optimizeUnused prev instrs
-                _  -> (:) <$> pure instr <*> optimizeUnused (prev ++ [instr]) instrs
+                _  -> prependA instr $ optimizeUnused (prev ++ [instr]) instrs
     where
         nextWriteScope regName =
             case findIndex (\i -> fromMaybe False $ (regName ==) <$> instResult i) instrs of

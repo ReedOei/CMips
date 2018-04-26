@@ -34,14 +34,6 @@ generate (inst:instructions) =
     generateInstruction inst ++ "\n" ++
     intercalate "\n" (map (("    " ++) . generateInstruction) instructions)
 
-regList = "0" : "sp" : "ra" : ["at", "v0", "v1"] ++ argRegs ++ tempRegs ++ saveRegs ++ ["k0", "k1", "gp", "fp"]
-    where
-        argRegs = map (("a" ++) . show) [0..3]
-        tempRegs = map (("t" ++) . show) [0..9]
-        saveRegs = map (("s" ++) . show) [0..7]
-isRegister :: String -> Bool
-isRegister r = r `elem` regList
-
 regName :: String -> String
 regName "" = ""
 regName reg
