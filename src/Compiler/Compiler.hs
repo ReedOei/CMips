@@ -145,22 +145,40 @@ compileCondition :: String -> String -> CExpression -> State Environment [MIPSIn
 compileCondition trueLabel falseLabel st@(CBinaryOp And a b) =  do
     aInstr <- compileCondition "" falseLabel a
     bInstr <- compileCondition "" falseLabel b
+    aInstr <-
+        case a of
+            CBinaryOp Or _ _ -> compileCondition trueLabel falseLabel a
+            CBinaryOp And _ _ -> filter (not . isJ) <$> compileCondition trueLabel falseLabel a
+            _ -> compileCondition "" falseLabel a
+    bInstr <-
+        case b of
+            CBinaryOp Or _ _ -> compileCondition trueLabel falseLabel b
+            CBinaryOp And _ _ -> filter (not . isJ) <$> compileCondition trueLabel falseLabel b
+            _ -> compileCondition "" falseLabel b
 
     pure $ aInstr ++ bInstr ++ [Inst OP_J trueLabel "" ""]
+
+    where
+        isJ (Inst OP_J _ _ _) = True
+        isJ _ = False
 
 compileCondition trueLabel falseLabel st@(CBinaryOp Or a b) = do
     aInstr <-
         case a of
-            CBinaryOp Or _ _ -> compileCondition trueLabel falseLabel a
+            CBinaryOp Or _ _ -> filter (not . isJ) <$> compileCondition trueLabel falseLabel a
             CBinaryOp And _ _ -> compileCondition trueLabel falseLabel a
             _ -> compileCondition trueLabel "" a
     bInstr <-
         case b of
-            CBinaryOp Or _ _ -> compileCondition trueLabel falseLabel b
+            CBinaryOp Or _ _ -> filter (not . isJ) <$> compileCondition trueLabel falseLabel b
             CBinaryOp And _ _ -> compileCondition trueLabel falseLabel b
             _ -> compileCondition trueLabel "" b
 
     pure $ aInstr ++ bInstr ++ [Inst OP_J falseLabel "" ""]
+
+    where
+        isJ (Inst OP_J _ _ _) = True
+        isJ _ = False
 
 compileCondition trueLabel falseLabel expr@(CBinaryOp op a b) = do
     (aReg, aInstr) <- compileExpression a
@@ -293,7 +311,16 @@ compileStatement st@(ForStatement ini cond step body) = do
 
     pure $ Empty : Comment (readable st) : instrIni ++ instr
 
-compileStatement st@(Return expr) = do
+compileStatement st@(Return Nothing) = do
+    fInfo <- getFuncLabel =<< getCurFunc
+
+    let funcEnd = case fInfo of
+                    Nothing -> error "Unknown current function"
+                    Just (_, endLabel) -> endLabel
+
+    pure [Empty, Comment (readable st), Inst OP_J funcEnd "" ""]
+
+compileStatement st@(Return (Just expr)) = do
     (source, instr) <- compileExpression expr
 
     fInfo <- getFuncLabel =<< getCurFunc
@@ -449,15 +476,26 @@ compileExpressionTemp (CArrayAccess accessExpr expr) = do
     varType <- resolveType (CPrefix Dereference accessExpr) >>= elaborateType
 
     doAccess <- case accessExpr of
-                    MemberAccess e (VarRef name) -> pure $ init accessInstr
-                    _ -> pure accessInstr
+                        MemberAccess e (VarRef name) -> do
+                            pure $ init accessInstr
+                            t <- resolveType accessExpr >>= elaborateType
+
+                            case t of
+                                Array _ _ -> pure $ init accessInstr
+                                _ -> pure accessInstr
+                        _ -> pure accessInstr
 
     structOffset <- case accessExpr of
-                        MemberAccess e (VarRef name) ->
-                            case last accessInstr of
-                                Inst OP_LW loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
-                                Inst OP_LB loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
-                                inst -> error $ "Unexpected instruction after array access(" ++ show accessExpr ++ "): " ++ show inst
+                        MemberAccess e (VarRef name) -> do
+                            t <- resolveType accessExpr >>= elaborateType
+
+                            case t of
+                                Array _ _ ->
+                                    case last accessInstr of
+                                        Inst OP_LW loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
+                                        Inst OP_LB loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
+                                        inst -> error $ "Unexpected instruction after array access(" ++ show accessExpr ++ "): " ++ show inst
+                                _ -> pure []
                         _ -> pure []
 
     case sizeof varType of

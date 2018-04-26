@@ -157,7 +157,7 @@ compileDef (Define fname args body) = do
 
     let initial = map go $ init funcBody
     let (returnType, final) = case last funcBody of
-                                (t, Left expr) -> (t, Return expr)
+                                (t, Left expr) -> (t, Return $ Just expr)
                                 (t, Right st) -> (t, st)
 
     getOrInitFuncType fname types
@@ -191,12 +191,12 @@ compileExpr fname (Identifier i) = do
 compileExpr fname (Evaluate (Identifier "if") [condExpr,yes,no]) = do
     yesSts <- compileExpr fname yes
     let (yesType, finalYes) = case last yesSts of
-                                (t, Left expr) -> (t, Return expr)
+                                (t, Left expr) -> (t, Return $ Just expr)
                                 (t, Right st) -> (t, st)
 
     noSts <- compileExpr fname no
     let (_, finalNo) = case last noSts of
-                            (t, Left expr) -> (t, Return expr)
+                            (t, Left expr) -> (t, Return $ Just expr)
                             (t, Right st) -> (t, st)
 
     condSts <- compileExpr fname condExpr
@@ -218,7 +218,7 @@ compileExpr fname (Evaluate (Identifier called) args) = do
 
     if isStdLibraryFunction called then
         handleStdFunction fname $ Evaluate (Identifier called) args
-    else do
+    else
         case find (\(name, op) -> name == called) cArithOps of
             Just (_, op) -> do
                 let isBoolean = called `elem` cBooleanOps

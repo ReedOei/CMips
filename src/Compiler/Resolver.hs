@@ -193,16 +193,16 @@ resolveType (LitFloat _) = pure $ NamedType "float"
 resolveType NULL = pure $ Type Pointer $ NamedType "void"
 
 resolveType (CPrefix Dereference expr) = do
-    t <- resolveType expr
+    t <- resolveType expr >>= elaborateType
 
     case t of
         Type Pointer a -> pure a
         Array _ t -> pure t
         _ -> error $ "Cannot dereference non-pointer type '" ++ show t ++ "' in expression: " ++ show expr
-resolveType (CPrefix _ expr) = resolveType expr
+resolveType (CPrefix _ expr) = resolveType expr >>= elaborateType
 
 resolveType (CArrayAccess accessExpr _) = resolveType $ CPrefix Dereference accessExpr
-resolveType (CPostfix _ expr) = resolveType expr
+resolveType (CPostfix _ expr) = resolveType expr >>= elaborateType
 resolveType (FuncCall "malloc" _) = pure $ Type Pointer $ NamedType "void"
 resolveType (FuncCall "printf" _) = pure $ NamedType "void"
 resolveType (FuncCall funcName _) = do

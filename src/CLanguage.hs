@@ -32,7 +32,7 @@ data CElement = Preprocessor PreKind String
                 | CommentElement CStatement
     deriving (Show, Eq)
 
-data CStatement = Return CExpression
+data CStatement = Return (Maybe CExpression)
                 | VarDef Var (Maybe CExpression)
                 | IfStatement CExpression (Maybe CStatement) [CStatement]
                 | ElseBlock [CStatement]
@@ -119,7 +119,8 @@ maybeOp (Just op) = readableOp op
 
 readable :: CStatement -> String
 readable (ExprStatement expr) = readableExpr expr ++ ";"
-readable (Return expr) = "return " ++ readableExpr expr ++ ";"
+readable (Return Nothing) = "return;"
+readable (Return (Just expr)) = "return " ++ readableExpr expr ++ ";"
 readable (VarDef var Nothing) = readableVar var ++ ";"
 readable (VarDef var (Just ini)) = readableVar var ++ " = " ++ readableExpr ini ++ ";"
 readable (IfStatement cond _ _) = "if (" ++ readableExpr cond ++ ")"

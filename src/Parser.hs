@@ -301,7 +301,7 @@ returnParser = do
     wsSkip
     string "return"
     wsSkip
-    Return <$> expressionParser
+    Return <$> optionMaybe expressionParser -- Can not have a return if void function.
 
 assignParser :: CharParser st CStatement
 assignParser = do
