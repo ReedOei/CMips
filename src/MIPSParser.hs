@@ -66,7 +66,7 @@ sectionElement = do
 
 opParser :: CharParser st MIPSOp
 opParser = do
-    opName <- many1 (noneOf " \n")
+    opName <- many1 (noneOf "\t \n$#,")
     case find ((== opName) . mnemonic) opList of
         Nothing -> error $ "Unknown mips mnemonic: '" ++ opName ++ "'"
         Just op -> pure op
@@ -75,12 +75,12 @@ operandParser :: CharParser st String
 operandParser = do
     wsSkip
     optional (char '$')
-    many (noneOf " (),\n")
+    many (noneOf " (),\n#")
 
 mipsLabel :: CharParser st MIPSInstruction
 mipsLabel = do
     wsSkip
-    name <- many1 (noneOf ":\n")
+    name <- many1 (noneOf ":\n#")
     char ':'
     pure $ Label name
 
@@ -88,31 +88,41 @@ mipsInstr :: CharParser st MIPSInstruction
 mipsInstr = do
     wsSkip
     op <- opParser
+    wsSkip
 
     case op of
         _ | op `elem` [OP_LW, OP_SW, OP_LB, OP_SB] -> do
             a <- operandParser
+            wsSkip
             symbol $ char ','
 
             b <- operandParser
 
-            p <- optionMaybe $ lookAhead $ symbol $ char '('
+            p <- optionMaybe $ try $ lookAhead $ symbol $ char '('
             case p of
                 -- No (, that means it's just a single val that goes in c, and a 0 offset
-                Nothing -> pure $ Inst op a "0" b
+                Nothing -> do
+                    optional mipsComment
+
+                    pure $ Inst op a "0" b
                 Just _ -> do
                     c <- between (symbol (char '(')) (symbol (char ')')) operandParser
+
+                    optional mipsComment
 
                     pure $ Inst op a b c
 
         _ -> do
             a <- operandParser
-            b <- optionMaybe $ do
+            b <- optionMaybe $ try $ do
                     symbol $ char ','
                     operandParser
-            c <- optionMaybe $ do
+            c <- optionMaybe $ try $ do
                     symbol $ char ','
                     operandParser
+
+
+            optional mipsComment
 
             pure $ Inst op a (fromMaybe "" b) (fromMaybe "" c)
 

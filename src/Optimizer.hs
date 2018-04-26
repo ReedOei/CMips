@@ -1,27 +1,137 @@
 module Optimizer where
 
+import Control.Lens (view, set)
+
 import Control.Monad
 import Control.Monad.State
 
 import Data.List ((\\), isPrefixOf, findIndices, find, findIndex, nub)
 import Data.Maybe (isNothing, mapMaybe, isJust, fromMaybe)
+import Data.Map (Map)
+import qualified Data.Map as Map
 
 import Compiler.Types
 import MIPSLanguage
-
+import MIPSParser
 import Util
 
 import System.IO.Unsafe
 
 optimize :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-optimize = findTemp [] >=>
-           -- Repeatedly apply optimizations until there are no changes in the code.
-           (untilM noChange (optimizeArith [] >=>
-                             optimizeResults >=>
-                             optimizeFloats >=>
-                             optimizeJumps) . pure)
+optimize instrs = do
+    optLevel <- view (compileOptions . optimizeLevel) <$> get
 
+    if optLevel > 0 then
+        optimizeCalls instrs >>=
+        findTemp [] >>=
+               -- -- Repeatedly apply optimizations until there are no changes in the code.
+               (untilM noChange (optimizeArith [] >=>
+                                 optimizeResults >=>
+                                 optimizeFloats >=>
+                                 optimizeJumps) . pure)
+    else
+        pure instrs
+
+allocate :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 allocate = allocateRegisters >=> handleResSave
+
+optimizeCalls :: [MIPSInstruction] -> State Environment [MIPSInstruction]
+optimizeCalls instrs = do
+    inline <- view (compileOptions . useInlining) <$> get
+    if inline then
+        optimizeInlining [] instrs
+    else
+        pure instrs
+
+-- | Tries to inline functions.
+--   Currently, this can only be done if the compiled assembly of the function meets the following criteria:
+--
+--   1. The only jump is jr $ra.
+--   2. Only registers used are $a and $v registers.
+--   3. No labels other than the function name label.
+--
+--   Additionally, cannot be done to jalr's, because it is not known at compile time whether they could be inline.
+optimizeInlining :: [MIPSInstruction] -> [MIPSInstruction] -> State Environment [MIPSInstruction]
+optimizeInlining _ [] = pure []
+optimizeInlining prevInstr (instr@(Inst OP_JAL funcLabel _ _):instrs) = do
+    funcName <- fromMaybe (error ("Encountered unknown function label while inlining: '" ++ funcLabel ++ "'")) <$> getFuncNameByLabel funcLabel
+    curFuncName <- getCurFunc
+
+    -- Make sure we don't try to inline ourselves (because we haven't compiled ourselves yet).
+    if funcName /= curFuncName then do
+        compiledFunc <- Map.lookup funcName . view compiled <$> get
+
+        let compiledInstrs = fromMaybe (error ("Encountered uncompiled function while inlining: '" ++ funcName ++ "'")) compiledFunc
+
+        if all easyInlinable compiledInstrs then do
+            -- Delete the call and copy the compiled body in. Remove all jumps and labels from the inlined functions.
+            let replacement = filter (\i -> not (isLabel i) && not (isJump i)) compiledInstrs
+            (++) <$> pure replacement <*> optimizeInlining (prevInstr ++ replacement) instrs
+        else
+            -- unsafePerformIO $ do
+            --     putStrLn $ "Can we aggressively inline a call to " ++ funcName ++ ": " ++ show (all inlinable compiledInstrs)
+            --     pure $ pure ()
+
+            -- See if seems like it's worth it to inline.
+            if all inlinable compiledInstrs then do
+                deallocated <- filter (\i -> not (is OP_JR i) && not (isFuncLabel i)) <$> mapM deallocateRegisters compiledInstrs
+
+                modify $ set (compileOptions . useInlining) False -- Turn off inlining so we don't get into a loop
+
+                optimizedSelf <- optimize (prevInstr ++ deallocated ++ instrs)
+
+                modify $ set (compileOptions . useInlining) True -- Turn inlining back on.
+
+                if length optimizedSelf < length (prevInstr ++ [instr] ++ instrs ++ compiledInstrs) then
+                    (++) <$> pure deallocated <*> optimizeInlining (prevInstr ++ deallocated) instrs
+                else
+                    prependA instr $ optimizeInlining (prevInstr ++ [instr]) instrs
+            else
+                prependA instr $ optimizeInlining (prevInstr ++ [instr]) instrs
+    else
+        prependA instr $ optimizeInlining (prevInstr ++ [instr]) instrs
+
+    where
+        easyInlinable (Inst OP_JR "ra" "" "") = True
+        easyInlinable instr@(Inst op a b c)
+            | isJump instr || isCall instr = False
+            | otherwise = all (\r -> "a" `isPrefixOf` r || "v" `isPrefixOf` r) [a,b,c]
+        easyInlinable (Label labelName) = labelName == funcLabel
+        easyInlinable _ = True
+
+        isFuncLabel (Label labelName) = labelName == funcLabel
+        isFuncLabel _ = False
+
+        deallocateRegisters instr@(Inst op a b c) = do
+            newOps <- mapM dealloc [a,b,c]
+            pure $ setOperands instr newOps
+            where
+                dealloc r
+                    -- Make sure they get allocate to the same registers as before.
+                    | "t" `isPrefixOf` r = do
+                        exists <- registerNameExists r
+                        if exists then
+                            getRegister r
+                        else
+                            useNextRegister "result_temp" r
+                    | "f" `isPrefixOf` r = do
+                        exists <- registerNameExists r
+                        if exists then
+                            getRegister r
+                        else
+                            useNextRegister "result_float" r
+                    | otherwise = pure r
+        deallocateRegisters i = pure i
+
+        inlinable (Inst OP_JR "ra" "" "") = True
+        -- Can't do it if there are saved registers, calls, or stack management.
+        inlinable instr@(Inst op a b c)
+            | isCall instr = False
+            | otherwise = all (\r -> r /= "sp" && not ("s" `isPrefixOf` r)) [a,b,c]
+        inlinable instr@(Label labelName) = labelName == funcLabel
+        inlinable _ = True
+
+optimizeInlining prevInstr (i:instrs) = prependA i $ optimizeInlining (prevInstr ++ [i]) instrs
 
 isNum :: String -> Bool
 isNum = all (`elem` ("1234567890" :: String))
@@ -96,6 +206,7 @@ resolveConstant prev regName
                                 _ -> Nothing
                         _ -> Nothing
             Nothing -> Nothing
+
 
 optimizeJumps :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeJumps = removeUselessJumps >=> removeUnusedLabels
@@ -222,18 +333,20 @@ optimizeMovedResultsF (i:instrs) = prependA i $ optimizeMovedResultsF instrs
 -- sw $t1, 0($t2)
 optimizeAlias :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimizeAlias [] = pure []
-optimizeAlias (instr@(Inst OP_MOVE dest source _):instrs) =
-    case filter (hasOperand (== dest)) instrs of
-        -- Make sure there are no uses of dest across labels, jumps, or function calls.
-        -- and make sure that there are no writes to source.
-        allUses@(_:_) | scopeSafe dest (instr:instrs) &&
-                        -- Check that we don't write to the source, this causes an issue with the renaming
-                        -- But if the write to the source is after we're done using dest, then it doesn't matter anymore.
-                        not (any (hasResult source) (init (scope dest (instr:instrs)))) ->
-            -- If it's safe, we'll just delete this move and replace the dest with the source from now on.
-            optimizeAlias $ map (replaceOperand dest source) instrs
+optimizeAlias (instr@(Inst OP_MOVE dest source _):instrs)
+    -- Can't do alias stuff with these, because they are special names.
+    | "a" `isPrefixOf` dest || "v" `isPrefixOf` dest = prependA instr $ optimizeAlias instrs
+    | otherwise = case filter (hasOperand (== dest)) instrs of
+                    -- Make sure there are no uses of dest across labels, jumps, or function calls.
+                    -- and make sure that there are no writes to source.
+                    allUses@(_:_) | scopeSafe dest (instr:instrs) &&
+                                    -- Check that we don't write to the source, this causes an issue with the renaming
+                                    -- But if the write to the source is after we're done using dest, then it doesn't matter anymore.
+                                    not (any (hasResult source) (init (scope dest (instr:instrs)))) ->
+                        -- If it's safe, we'll just delete this move and replace the dest with the source from now on.
+                        optimizeAlias $ map (replaceOperand dest source) instrs
 
-        _ -> prependA instr $ optimizeAlias instrs
+                    _ -> prependA instr $ optimizeAlias instrs
     where
         hasResult regName instr =
             case instResult instr of
@@ -314,8 +427,14 @@ optimizeUnused prev (instr:instrs) =
         Inst OP_SW _ _ _ -> (:) <$> pure instr <*> optimizeUnused (prev ++ [instr]) instrs
         Inst OP_SB _ _ _ -> (:) <$> pure instr <*> optimizeUnused (prev ++ [instr]) instrs
         _ -> case instResult instr of
+                Just regName
+                -- If this register isn't used and no calls, just loaded (can happen with inlining), then ignore it.
+                            --  let ws = nextWriteScope regName in
+                            --    (isRegType "v" regName || isRegType "a" regName) &&
+                            --    not (any isCall ws || any isJump ws || any isLabel ws) &&
+                            --    not (any (hasOperand (== regName)) ws) -> optimizeUnused prev instrs
                 -- By default, v, a, and result_float registers are always assumed used.
-                Just regName | isRegType "v" regName ||
+                             | isRegType "v" regName ||
                                isRegType "a" regName ||
                                isRegType "f" regName || -- Have to do this in addition to result float because we need f12 for printing floats.
                                isRegType "result_float" regName -> prependA instr $ optimizeUnused (prev ++ [instr]) instrs
@@ -323,6 +442,11 @@ optimizeUnused prev (instr:instrs) =
                 -- Look at everything but this instruction (but obviously this instruction is relevant to itself)
                 Just regName | regName `notElem` nub (concatMap instUses (prev ++ instrs)) -> optimizeUnused prev instrs
                 _  -> (:) <$> pure instr <*> optimizeUnused (prev ++ [instr]) instrs
+    where
+        nextWriteScope regName =
+            case findIndex (\i -> fromMaybe False $ (regName ==) <$> instResult i) instrs of
+                Nothing -> instrs -- There is no next write, so this register is in scope for all of the instructions.
+                Just i -> take (i - 1) instrs
 
 getUnusedRegisters :: [String] -> [String]
 getUnusedRegisters regs = avail \\ regs

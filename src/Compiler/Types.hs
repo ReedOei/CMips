@@ -16,11 +16,12 @@ import MIPSLanguage
 import System.IO.Unsafe
 
 data CompileOptions = CompileOptions
-    { _optimizeLevel :: Int }
+    { _optimizeLevel :: Int
+    , _useInlining :: Bool }
     deriving Show
 makeLenses ''CompileOptions
 
-defaultCompileOptions = CompileOptions 1
+defaultCompileOptions = CompileOptions 1 True
 
 -- Name, type, value
 -- e.g.:
@@ -58,6 +59,7 @@ data Environment = Environment
     , _dataSections :: Data
     , _global :: Global
     , _local :: Local
+    , _compiled :: Map String [MIPSInstruction] -- The compiled assembly for all functions that have been compiled so far.
     , _compileOptions :: CompileOptions }
     deriving Show
 makeLenses ''Environment
@@ -158,6 +160,9 @@ getNextLabel labelType = do
 
     pure newLabel
 
+getFuncNameByLabel :: String -> State Environment (Maybe String)
+getFuncNameByLabel funcLabel = lookup funcLabel . map (\(k, (fLabel, _)) -> (fLabel, k)) . Map.assocs . view (global . funcs) <$> get
+
 funcLabel :: String -> State Environment (String, String)
 funcLabel funcName = do
     funcLabel <- getNextLabel funcName
@@ -180,10 +185,10 @@ purgeRegTypesEnv :: [String] -> Environment -> Environment
 purgeRegTypesEnv rTypes env = foldr purgeRegTypeEnv env rTypes
 
 emptyEnvironment :: Environment
-emptyEnvironment = Environment (CFile "" []) (Data [] []) (Global [] Map.empty "") (Local 0 Map.empty Map.empty) defaultCompileOptions
+emptyEnvironment = Environment (CFile "" []) (Data [] []) (Global [] Map.empty "") (Local 0 Map.empty Map.empty) Map.empty defaultCompileOptions
 
 newEnvironment :: CompileOptions -> CFile -> Environment
-newEnvironment opts file = Environment file (Data [] []) (Global [] Map.empty "") (Local 0 Map.empty Map.empty) opts
+newEnvironment opts file = Environment file (Data [] []) (Global [] Map.empty "") (Local 0 Map.empty Map.empty) Map.empty opts
 
 resetLocal :: Environment -> Environment
 resetLocal = set local $ Local 0 Map.empty Map.empty

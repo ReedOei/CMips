@@ -2,7 +2,7 @@
 
 module Compiler.Compiler where
 
-import Control.Lens (view)
+import Control.Lens (view, over)
 import Control.Monad
 import Control.Monad.State
 
@@ -13,11 +13,14 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, isNothing)
 
+import Text.ParserCombinators.Parsec (parse)
+
 import Compiler.Resolver
 import Compiler.Types
 import Optimizer
 import CLanguage
 import MIPSLanguage
+import MIPSParser
 import Parser (loadFile)
 import Util
 
@@ -108,13 +111,19 @@ compileElement func@(FuncDef t funcName args statements) =
         reserved <- stalloc "" 0 -- Requesting 0 more bytes will give us the top
         modify $ purgeRegTypeEnv "s"
         modify $ purgeRegTypeEnv "t"
-        pure $ Label label :
-               Comment (readableFuncDef func) :
-               saveStack reserved saveRegs ++
-               finalInstr ++
-               restoreStack reserved saveRegs ++
-               freeMemory ++
-               [Inst OP_JR "ra" "" ""]
+
+
+        let asm = Label label :
+                  Comment (readableFuncDef func) :
+                  saveStack reserved saveRegs ++
+                  finalInstr ++
+                  restoreStack reserved saveRegs ++
+                  freeMemory ++
+                  [Inst OP_JR "ra" "" ""]
+
+        modify $ over compiled (Map.insert funcName asm)
+
+        pure asm
     where
         freeMemory =
             case funcName of
@@ -123,9 +132,21 @@ compileElement func@(FuncDef t funcName args statements) =
 compileElement func@(Inline t funcName args statements) = do
     (label, funcEnd) <- funcLabel funcName
 
-    pure $ Label label :
-           Comment (readableFuncDef func) :
-           map (\str -> Inst LIT_ASM str "" "") statements
+    let asm = Label label :
+              Comment (readableFuncDef func) :
+              map (\str -> transformLitAsm (Inst LIT_ASM str "" "")) statements
+
+    modify $ over compiled (Map.insert funcName asm)
+
+    pure asm
+
+    where
+        transformLitAsm i@(Inst LIT_ASM str "" "") =
+            case parse mipsLine "" str of
+                Left err -> error $ "Error while parsing line of literal mips code: " ++ show err ++ "\n" ++
+                                    "MIPS Code: " ++ str
+                Right instr -> instr
+        transformLitAsm i = i
 
 compileElement (StructDef structName _) = pure [Comment $ "struct " ++ structName]
 
@@ -434,15 +455,20 @@ compileExpressionTemp (VarRef "INT_MAX") = do
     reg <- useNextRegister "result_save" "INT_MAX_VAL"
     pure (reg, [Inst OP_LI reg "2147483647" ""])
 compileExpressionTemp (VarRef varName) = do
-    fInfo <- getFuncLabel varName
+    exists <- registerNameExists varName
 
-    case fInfo of
-        Just (funcLabel, _) -> do
-            reg <- useNextRegister "result_save" $ varName ++ "_" ++ funcLabel
+    if exists then
+        (,[]) <$> getRegister varName
+    else do
+        fInfo <- getFuncLabel varName
 
-            pure (reg, [Inst OP_LA reg funcLabel ""])
+        case fInfo of
+            Just (funcLabel, _) -> do
+                reg <- useNextRegister "result_save" $ varName ++ "_" ++ funcLabel
 
-        Nothing -> (,[]) <$> getRegister varName
+                pure (reg, [Inst OP_LA reg funcLabel ""])
+
+            Nothing -> (,[]) <$> getRegister varName
 
 -- Special case for 0 because $0 always contains 0 -- this can save us an OP_LI
 compileExpressionTemp (LitInt 0) = pure ("0", [])

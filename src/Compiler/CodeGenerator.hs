@@ -4,6 +4,7 @@ import Data.Char (isAlpha)
 import Data.List (intercalate)
 
 import Compiler.Compiler
+import Compiler.Types
 import MIPSLanguage
 
 printCode :: MIPSFile -> IO ()
@@ -33,11 +34,19 @@ generate (inst:instructions) =
     generateInstruction inst ++ "\n" ++
     intercalate "\n" (map (("    " ++) . generateInstruction) instructions)
 
+regList = "0" : "sp" : "ra" : ["at", "v0", "v1"] ++ argRegs ++ tempRegs ++ saveRegs ++ ["k0", "k1", "gp", "fp"]
+    where
+        argRegs = map (("a" ++) . show) [0..3]
+        tempRegs = map (("t" ++) . show) [0..9]
+        saveRegs = map (("s" ++) . show) [0..7]
+isRegister :: String -> Bool
+isRegister r = r `elem` regList
+
 regName :: String -> String
 regName "" = ""
-regName reg@(c:_)
-    | isAlpha c = "$" ++ reg
-    | otherwise = reg
+regName reg
+    | not $ isRegister reg = reg
+    | otherwise = "$" ++ reg
 
 twoOp :: MIPSInstruction -> String
 twoOp (Inst op a b _) = mnemonic op ++ " $" ++ a ++ ", $" ++ b
@@ -45,8 +54,12 @@ twoOp (Inst op a b _) = mnemonic op ++ " $" ++ a ++ ", $" ++ b
 labelOp :: MIPSInstruction -> String
 labelOp (Inst op a _ _) = mnemonic op ++ " " ++ a
 
+branchOp (Inst op a b c) = mnemonic op ++ " $" ++ a ++ ", " ++ regName b ++ ", " ++ c
+
 memoryOp :: MIPSInstruction -> String
-memoryOp (Inst op a b c) = mnemonic op ++ " $" ++ a ++ ", " ++ b ++ "($" ++ c ++ ")"
+memoryOp (Inst op a b c)
+    | b == "0" && not (isRegister c) = mnemonic op ++ " $" ++ a ++ ", " ++ c
+    | otherwise = mnemonic op ++ " $" ++ a ++ ", " ++ b ++ "($" ++ c ++ ")"
 
 generateInstruction :: MIPSInstruction -> String
 generateInstruction Empty = ""
@@ -59,20 +72,20 @@ generateInstruction instr@(Inst funct rd rs rt) =
         OP_MOVE -> twoOp instr
         OP_LI -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs
         OP_LA -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs
-        OP_LW -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
-        OP_LB -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
-        OP_SW -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
-        OP_SB -> mnemonic funct ++ " $" ++ rd ++ ", " ++ rs ++ "($" ++ rt ++ ")"
+        OP_LW -> memoryOp instr
+        OP_LB -> memoryOp instr
+        OP_SW -> memoryOp instr
+        OP_SB -> memoryOp instr
         OP_J -> labelOp instr
         OP_JAL -> labelOp instr
         OP_JR -> mnemonic funct ++ " $" ++ rd
         OP_JALR -> mnemonic funct ++ " $" ++ rd
-        OP_BNE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
-        OP_BEQ -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
-        OP_BGT -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
-        OP_BGE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
-        OP_BLT -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
-        OP_BLE -> mnemonic funct ++ " $" ++ rd ++ ", $" ++ rs ++ ", " ++ rt
+        OP_BNE -> branchOp instr
+        OP_BEQ -> branchOp instr
+        OP_BGT -> branchOp instr
+        OP_BGE -> branchOp instr
+        OP_BLT -> branchOp instr
+        OP_BLE -> branchOp instr
         OP_NOT -> twoOp instr
         OP_MOVS -> twoOp instr
         OP_MTC1 -> twoOp instr

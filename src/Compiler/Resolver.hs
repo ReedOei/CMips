@@ -5,6 +5,8 @@ import Control.Monad.State
 
 import Data.List (find, maximumBy, isInfixOf)
 import Data.Maybe (fromMaybe)
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Ord (comparing)
 
 import CLanguage
@@ -162,15 +164,22 @@ resolve "NULL" = pure $ Type Pointer $ NamedType "void"
 resolve refName = do
     CFile _ elements <- view file <$> get
 
-    case find (\(Var _ varName) -> varName == refName) $ concatMap findTypesElement elements of
-        Just (Var varType _) -> pure varType
-        -- Could be a function name.
-        Nothing -> do
-            fType <- resolveFuncType refName
+    curFuncName <- getCurFunc
 
-            case fType of
-                Just (retType, argTypes) -> pure $ FunctionPointer retType argTypes
-                Nothing -> error $ "Unknown reference to ref: " ++ refName
+    curFunc <- resolveFuncCall curFuncName
+
+    case curFunc of
+        Nothing -> error $ "Unknown current function '" ++ curFuncName ++ "' while trying to resolve '" ++ refName ++ "'"
+        Just def ->
+            case find (\(Var _ varName) -> varName == refName) $ getLocalVariables def of
+                Just (Var varType _) -> pure varType
+                -- Could be a function name.
+                Nothing -> do
+                    fType <- resolveFuncType refName
+
+                    case fType of
+                        Just (retType, argTypes) -> pure $ FunctionPointer retType argTypes
+                        Nothing -> error $ "Unknown reference to ref: " ++ refName
 
 -- Won't be 100% accurate for the scope, but it should be "good enough"
 getVars :: CStatement -> [Var]

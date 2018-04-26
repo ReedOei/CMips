@@ -64,6 +64,7 @@ data MIPSOp = OP_ADD
             | OP_LS -- Load single
             | OP_SS -- Store single
             | OP_LIS -- Load immediate single.
+            | OP_MTC0
     deriving (Show, Eq)
 
 opList = [OP_ADD, OP_MOVE, OP_LI, OP_LA, OP_MUL,
@@ -74,10 +75,14 @@ opList = [OP_ADD, OP_MOVE, OP_LI, OP_LA, OP_MUL,
           OP_REM, OP_NOT, SYSCALL, OP_ADDS, OP_MULS,
           OP_SUBS, OP_MOVS, OP_MTC1, OP_MFC1, OP_CVT_W_S,
           OP_CVT_S_W, OP_CEQS, OP_CLES, OP_CLTS, OP_BC1F,
-          OP_BC1T, OP_LS, OP_SS, OP_LIS]
+          OP_BC1T, OP_LS, OP_SS, OP_LIS, OP_MTC0]
 
 isLabel (Label _) = True
 isLabel _ = False
+
+is :: MIPSOp -> MIPSInstruction -> Bool
+is opName (Inst op _ _ _) = opName == op
+is _ _ = False
 
 mnemonic :: MIPSOp -> String
 mnemonic OP_MOVE = "move"
@@ -126,6 +131,7 @@ mnemonic OP_BC1T = "bc1t"
 mnemonic OP_SS = "s.s"
 mnemonic OP_LS = "l.s"
 mnemonic OP_LIS = "li.s"
+mnemonic OP_MTC0 = "mtc0"
 
 opFindFloat :: BinaryOp -> MIPSOp
 opFindFloat Add = OP_ADDS

@@ -47,3 +47,8 @@ compilerTests = do
             (output, state) <- execute <$> (compile =<< loadFile "test-res/floats.c")
             output `shouldBe` ["2589.8306", "5402", "45.0", "5.0"]
 
+    describe "inline.c" $
+        it "has several function calls that should be inlined, and one that should not (it would use the stack too much and increase time)" $ do
+            (output, state) <- execute <$> (compile =<< loadFile "test-res/inline.c")
+            output `shouldBe` ["100 4 175"]
+

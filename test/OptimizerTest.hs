@@ -19,7 +19,7 @@ faster program = do
 
     (outputOpt, stateOpt) <- execute <$> (compileWith (set optimizeLevel 1 defaultCompileOptions) =<< program)
 
-    outputNoOpt `shouldBe` outputOpt
+    outputOpt `shouldBe` outputNoOpt
 
     let noOptTime = view executed stateNoOpt
     let optTime = view executed stateOpt
@@ -59,4 +59,6 @@ optimizerTests = do
             faster (compileLisp <$> loadLispFile "test-res/example.lisp")
         it "improves the speed but doesn't change the result of floats.c" $
             fasterC "test-res/floats.c"
+        it "improves the speed but doesn't change the result of inline.c" $
+            fasterC "test-res/inline.c"
 
