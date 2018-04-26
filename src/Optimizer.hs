@@ -347,7 +347,6 @@ findTemp examined (instr:instrs) = do
             -- No JALs or JALRs here, so safe to just use temp for this.
             -- Check for init scope because if the very last instruction is jalr $t0, and we don't need t0 after that, then it's fine to use
             -- a temp for that.
-            -- | isNothing (find isCall (init (scope a (instr:instrs)))) && "result_save" `isPrefixOf` a = do
             | scopeSafe a (instr:instrs) && "result_save" `isPrefixOf` a = do
                     ref <- getRegRef a
                     newReg <- useNextRegister "result_temp" ref
