@@ -449,25 +449,15 @@ compileExpressionTemp (CArrayAccess accessExpr expr) = do
     varType <- resolveType (CPrefix Dereference accessExpr) >>= elaborateType
 
     doAccess <- case accessExpr of
-                        MemberAccess e (VarRef name) -> do
-                            t <- resolveType accessExpr >>= elaborateType
-
-                            case t of
-                                Array _ _ -> pure $ init accessInstr
-                                _ -> pure accessInstr
-                        _ -> pure accessInstr
+                    MemberAccess e (VarRef name) -> pure $ init accessInstr
+                    _ -> pure accessInstr
 
     structOffset <- case accessExpr of
-                        MemberAccess e (VarRef name) -> do
-                            t <- resolveType accessExpr >>= elaborateType
-
-                            case t of
-                                Array _ _ ->
-                                    case last accessInstr of
-                                        Inst OP_LW loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
-                                        Inst OP_LB loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
-                                        inst -> error $ "Unexpected instruction after array access(" ++ show accessExpr ++ "): " ++ show inst
-                                _ -> pure []
+                        MemberAccess e (VarRef name) ->
+                            case last accessInstr of
+                                Inst OP_LW loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
+                                Inst OP_LB loadDest offset loadSource -> pure $ init accessInstr ++ [Inst OP_ADD loadDest loadSource offset]
+                                inst -> error $ "Unexpected instruction after array access(" ++ show accessExpr ++ "): " ++ show inst
                         _ -> pure []
 
     case sizeof varType of
