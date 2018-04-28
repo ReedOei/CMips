@@ -149,6 +149,7 @@ compileElement func@(Inline t funcName args statements) = do
         transformLitAsm i = i
 
 compileElement (StructDef structName _) = pure [Comment $ "struct " ++ structName]
+compileElement (CommentElement (CComment str)) = pure [Comment str]
 
 compileElement _ = pure []
 
@@ -280,6 +281,7 @@ handleIfStatement st@(IfStatement cond branches body) = do
 -- Compile statements
 ----------------------------------
 compileStatement :: CStatement -> State Environment [MIPSInstruction]
+compileStatement (CComment str) = pure [Comment str]
 compileStatement st@(VarDef (Var FunctionPointer{} varName) ini) = do
     reg <- useNextRegister "result_save" varName
 
@@ -390,8 +392,6 @@ compileStatement st@(ExprStatement expr) = do
     (_, instr) <- compileExpression expr
 
     pure $ Empty : Comment (readable st) : instr
-
-compileStatement CComment{} = pure []
 
 ---------------------------------------------
 -- Compile Expressions

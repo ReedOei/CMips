@@ -27,6 +27,7 @@ float h(float x, float y) {
 int main() {
     printf("%f\n", f(9.4));
 
+    // Test automatic conversion to integer from float.
     int floored = f(10.5);
 
     printf("%d\n", floored);
