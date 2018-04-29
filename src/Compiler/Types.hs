@@ -109,11 +109,13 @@ freeRegister name = do
         pure ()
 
 
-regList = "0" : "sp" : "ra" : ["at", "v0", "v1"] ++ argRegs ++ tempRegs ++ saveRegs ++ ["k0", "k1", "gp", "fp"]
+regList = "0" : "sp" : "ra" : ["at", "v0", "v1"] ++ argRegs ++ tempRegs ++ saveRegs ++ floatRegs ++ ["k0", "k1", "gp", "fp"]
     where
         argRegs = map (("a" ++) . show) [0..3]
         tempRegs = map (("t" ++) . show) [0..9]
         saveRegs = map (("s" ++) . show) [0..7]
+        floatRegs = map (("f" ++) . show) [0..31]
+
 isRegister :: String -> Bool
 isRegister r = r `elem` regList
 
