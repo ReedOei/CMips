@@ -108,13 +108,13 @@ optimizeInlining prevInstr (instr@(Inst OP_JAL funcLabel _ _):instrs) = do
             where
                 dealloc r
                     -- Make sure they get allocate to the same registers as before.
-                    | "t" `isPrefixOf` r = do
+                    | isRegType "t" r = do
                         exists <- registerNameExists r
                         if exists then
                             getRegister r
                         else
                             useNextRegister "result_temp" r
-                    | "f" `isPrefixOf` r = do
+                    | isRegType "f" r = do
                         exists <- registerNameExists r
                         if exists then
                             getRegister r
@@ -240,7 +240,8 @@ getNext = find go
         go _ = False
 
 optimizeResults :: [MIPSInstruction] -> State Environment [MIPSInstruction]
-optimizeResults = optimizeUnused [] >=> optimizeArgTemp >=> optimizeIdMove >=> optimizeMovedResults >=> optimizeAlias
+optimizeResults = optimizeUnused [] >=>
+                  optimizeArgTemp >=> optimizeIdMove >=> optimizeMovedResults >=> optimizeAlias
 
 -- | Checks the scope of a register to make sure there is no jumps, branches, calls, etc. in it.
 -- Utility for optimizing.
