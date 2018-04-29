@@ -187,13 +187,14 @@ resolveConstant prev regName
         case findIndex (hasOperand (== regName)) $ reverse prev of
             Just i ->
                 let beforeI = reverse $ drop (i + 1) $ reverse prev
-                    hasCall = isJust $ find isCall $ take i $ reverse prev in
+                    hasCall = isJust $ find isCall $ take i $ reverse prev
+                    hasBranching = any (\i -> isJump i || isLabel i) $ take i $ reverse prev in
                     case reverse prev !! i of
                         -- Make sure we don't optimize away self modifying things.
                         Inst op a b c | a == regName && (a == b || a == c) -> Nothing
 
                         -- If there was a call and this isn't a saved value, then we can't rely on it being constant through the call.
-                        _ | hasCall && not ("result_save" `isPrefixOf` regName)-> Nothing
+                        _ | (hasCall && not ("result_save" `isPrefixOf` regName)) || hasBranching -> Nothing
 
                         -- Need to make sure we don't use li multiple times.
                         Inst OP_LI _ val _ | isNothing (find (hasOperand (== regName)) beforeI) -> Just val
