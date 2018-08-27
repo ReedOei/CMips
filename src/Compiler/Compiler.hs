@@ -15,6 +15,7 @@ import Data.Maybe (fromMaybe, isNothing)
 
 import Text.ParserCombinators.Parsec (parse)
 
+import Analysis.Analyzer
 import Compiler.Resolver
 import Compiler.Types
 import Optimizer
@@ -40,14 +41,17 @@ preprocessor mainFile@(CFile fileName elements) = do
     includedFiles <- mapM ((loadFile >=> preprocessor) . getInclude) $ filter isInclude elements
     pure $ foldl mergeFiles mainFile includedFiles
 
-compile :: CFile -> IO MIPSFile
+compile :: CFile -> IO (Either [Warning] MIPSFile)
 compile file = compileWith defaultCompileOptions =<< preprocessor file
 
-compileWith :: CompileOptions -> CFile -> IO MIPSFile
+compileWith :: CompileOptions -> CFile -> IO (Either [Warning] MIPSFile)
 compileWith opts file = mainCompile opts <$> preprocessor file
 
-mainCompile :: CompileOptions -> CFile -> MIPSFile
-mainCompile opts file@(CFile fname initElements) = MIPSFile fname sections $ filter (not . null) instructions
+mainCompile :: CompileOptions -> CFile -> Either [Warning] MIPSFile
+mainCompile opts file@(CFile fname initElements) =
+    case analyze file of
+        [] -> Right $ MIPSFile fname sections $ filter (not . null) instructions
+        warnings -> Left warnings
     where
         sections = [generateDataSection "data" d, generateDataSection "kdata" kd, MIPSSection "text" []]
         (Data d kd) = view dataSections env

@@ -74,7 +74,7 @@ optimizeInlining prevInstr (instr@(Inst OP_JAL funcLabel _ _):instrs) = do
 
             -- See if seems like it's worth it to inline.
             if all inlinable compiledInstrs then do
-                deallocated <- filter (\i -> not (is OP_JR i) && not (isFuncLabel i)) <$> mapM deallocateRegisters compiledInstrs
+                deallocated <- filter (\i -> not (is OP_JR i || isFuncLabel i)) <$> mapM deallocateRegisters compiledInstrs
 
                 modify $ set (compileOptions . useInlining) False -- Turn off inlining so we don't get into a loop
 

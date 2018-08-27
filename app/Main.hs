@@ -44,14 +44,22 @@ main = do
     let filename = view infile args
     let optVal = view optLevel args
 
-    text <- if "lisp" `isSuffixOf` filename then
-                generateFile <$> (compileWith (set optimizeLevel optVal defaultCompileOptions) =<< (compileLisp <$> loadLispFile filename))
+    compilationResult <-
+            if "lisp" `isSuffixOf` filename then
+                compileWith (set optimizeLevel optVal defaultCompileOptions) =<< (compileLisp <$> loadLispFile filename)
             else
-                generateFile <$> (compileWith (set optimizeLevel optVal defaultCompileOptions) =<< loadFile filename)
+                compileWith (set optimizeLevel optVal defaultCompileOptions) =<< loadFile filename
 
-    putStrLn text
+    case compilationResult of
+        Left warnings -> do
+            putStrLn "Warnings:"
+            mapM_ print warnings
+        Right compiledFile -> do
+            let text = generateFile compiledFile
 
-    case view outfile args of
-        Nothing -> writeFile "a.s" text
-        Just oname -> writeFile oname text
+            putStrLn text
+
+            case view outfile args of
+                Nothing -> writeFile "a.s" text
+                Just oname -> writeFile oname text
 
