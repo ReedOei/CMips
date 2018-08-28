@@ -1,8 +1,15 @@
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+
 module CLanguage where
+
+import Control.Lens ((^.), makeLenses)
 
 import Data.Either (fromLeft, fromRight)
 import Data.List (intercalate)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, maybeToList)
+
+import Util
 
 data VarKind = Pointer | Value
     deriving (Show, Eq)
@@ -32,6 +39,9 @@ data CElement = Preprocessor PreKind String
                 | CommentElement CStatement
     deriving (Show, Eq)
 
+data Annotation = Annotation String [String]
+    deriving (Show, Eq)
+
 data CStatement = Return (Maybe CExpression)
                 | VarDef Var (Maybe CExpression)
                 | IfStatement CExpression (Maybe CStatement) [CStatement]
@@ -41,6 +51,7 @@ data CStatement = Return (Maybe CExpression)
                 | Assign (Maybe BinaryOp) CExpression CExpression
                 | ExprStatement CExpression
                 | CComment String
+                | Annotated [Annotation] CStatement
     deriving (Show, Eq)
 
 data PrefixOp = PreIncrement
@@ -74,109 +85,217 @@ data CExpression = VarRef String
     deriving (Show, Eq)
 
 data CFile = CFile String [CElement]
-    deriving Show
+    deriving (Show, Eq)
 
-cBooleanOps = ["||", "&&", ">", "<", ">=", "<="]
+data Parent = FileParent CFile
+            | ElementParent CElement
+            | StatementParent CStatement
+            | ExprParent CExpression
+    deriving (Show, Eq)
+
+data Context t = Context
+    { _parents :: [Parent]
+    , _funcName :: Maybe String
+    , _val :: t }
+makeLenses ''Context
+
+deriving instance Show t => Show (Context t)
+deriving instance Eq t => Eq (Context t)
+
+defaultContext file = Context [FileParent file] Nothing
+elemContext (Context parents _ elem@(FuncDef _ funcName _ _)) = Context (ElementParent elem : parents) (Just funcName)
+elemContext (Context parents funcName elem) = Context (ElementParent elem : parents) funcName
+stmtContext (Context parents funcName stmt) = Context (StatementParent stmt : parents) funcName
+exprContext (Context parents funcName expr) = Context (ExprParent expr : parents) funcName
+
+class Enumerable t where
+    enumElement :: Context CElement -> [Context t]
+    enumStatement :: Context CStatement -> [Context t]
+    enumExpr :: Context CExpression -> [Context t]
+
+    enumFile :: CFile -> [Context t]
+    enumFile file@(CFile _ elements) = concatMap (enumElement . defaultContext file) elements
+
+instance Enumerable CElement where
+    enumElement context = [context]
+    enumStatement _ = []
+    enumExpr _ = []
+
+instance Enumerable CStatement where
+    enumElement context =
+        let contexts = map (elemContext context) $
+                case context ^. val of
+                    FuncDef _ _ _ ss -> ss
+                    _ -> []
+        in contexts ++ concatMap enumStatement contexts
+
+    enumStatement context =
+        let contexts = map (stmtContext context) $
+                case context ^. val of
+                    IfStatement _ elseBlock ss -> ss ++ maybe [] (\(ElseBlock inner) -> inner) elseBlock
+                    ElseBlock ss -> ss
+                    WhileStatement _ ss -> ss
+                    ForStatement init _ step ss -> init : step : ss
+                    _ -> []
+            in contexts ++ concatMap enumStatement contexts
+
+    enumExpr _ = []
+
+instance Enumerable CExpression where
+    -- Gather all the statements in the element, then enumerate through the expressions using the below
+    enumElement context =
+        let contexts = map (elemContext context) $
+                case context ^. val of
+                    FuncDef _ _ _ ss -> ss
+                    _ -> []
+        in concatMap enumStatement contexts
+
+    enumStatement context =
+        let statementContexts = map (stmtContext context) $
+                case context ^. val of
+                    IfStatement cond elseBlock ss -> ss ++ maybe [] (\(ElseBlock inner) -> inner) elseBlock
+                    WhileStatement cond ss -> ss
+                    ForStatement init _ step ss -> init : step : ss
+                    ElseBlock ss -> ss
+                    Annotated _ stmt -> [stmt]
+                    _ -> []
+            exprContexts = map (stmtContext context) $
+                case context ^. val of
+                    Return (Just expr) -> [expr]
+                    IfStatement cond _ _ -> [cond]
+                    WhileStatement cond _ -> [cond]
+                    ForStatement _ cond _ _ -> [cond]
+                    Assign _ a b -> [a,b]
+                    ExprStatement expr -> [expr]
+                    VarDef _ (Just expr) -> [expr]
+                    _ -> []
+            in exprContexts ++ concatMap enumStatement statementContexts ++ concatMap enumExpr exprContexts
+
+    enumExpr context =
+        let contexts = map (exprContext context) $
+                case context ^. val of
+                    MemberAccess a b -> [a,b]
+                    FuncCall _ exprs -> exprs
+                    CPrefix _ expr -> [expr]
+                    CPostfix _ expr -> [expr]
+                    CArrayAccess a b -> [a, b]
+                    CBinaryOp _ a b -> [a, b]
+                    _ -> []
+        in contexts ++ concatMap enumExpr contexts
 
 cArithOps = [("*", Mult), ("/", Div), ("%", Mod), ("+", Add), ("-", Minus),
              ("||", Or), ("&&", And),
              (">=", CGTE), ("<=", CLTE), ("!=", CNE), ("==", CEQ),
              ("|", OrBit), ("&", AndBit), ("<<", ShiftLeft), (">>", ShiftRight),
              ("^", Xor), (">", CGT), ("<", CLT)]
+instance PrettyPrint BinaryOp where
+    prettyPrint op = fromMaybe (error ("Unknown op: " ++ show op)) $
+            lookup op $ map(\(a, b) -> (b, a)) cArithOps
+
+cPrefixOps = [("++", PreIncrement), ("--", PreDecrement), ("!", PreNot), ("*", Dereference), ("&", AddressOf)]
+instance PrettyPrint PrefixOp where
+    prettyPrint op = fromMaybe (error ("Unknown op: " ++ show op)) $
+            lookup op $ map(\(a, b) -> (b, a)) cPrefixOps
 
 cPostfixOps = [("++", PostIncrement), ("--", PostDecrement)]
-cPrefixOps = [("++", PreIncrement), ("--", PreDecrement), ("!", PreNot), ("*", Dereference), ("&", AddressOf)]
+instance PrettyPrint PostfixOp where
+    prettyPrint op = fromMaybe (error ("Unknown op: " ++ show op)) $
+            lookup op $ map(\(a, b) -> (b, a)) cPostfixOps
 
-readableOp :: BinaryOp -> String
-readableOp op =
-    fromMaybe (error ("Unknown op: " ++ show op)) $
-        lookup op $ map(\(a, b) -> (b, a)) cArithOps
+instance PrettyPrint Annotation where
+    prettyPrint (Annotation name properties) = "@" ++ name ++ "(" ++ intercalate "," properties ++ ")"
 
-readablePrefix :: PrefixOp -> String
-readablePrefix op =
-    fromMaybe (error ("Unknown op: " ++ show op)) $
-        lookup op $ map(\(a, b) -> (b, a)) cPrefixOps
+instance PrettyPrint PreKind where
+    prettyPrint Include = "include"
+    prettyPrint IfNDef = "ifndef"
+    prettyPrint EndIf = "endif"
+    prettyPrint CDefine = "define"
+    prettyPrint MiscPreKind = ""
 
-readablePostfix :: PostfixOp -> String
-readablePostfix op =
-    fromMaybe (error ("Unknown op: " ++ show op)) $
-        lookup op $ map(\(a, b) -> (b, a)) cPostfixOps
+instance PrettyPrint CElement where
+    prettyPrint (Preprocessor preKind str) = "#" ++ prettyPrint preKind ++ " " ++ str
+    prettyPrint (FuncDef retType name args _) = prettyPrint retType ++ " " ++ name ++ "(" ++ intercalate "," (map prettyPrint args) ++ ");"
+    prettyPrint (Inline retType name args _) = prettyPrint retType ++ " " ++ name ++ "(" ++ intercalate "," (map prettyPrint args) ++ ");"
+    prettyPrint (StructDef name _) = "struct " ++ name
+    prettyPrint (CommentElement (CComment str)) = "//" ++ str
+    prettyPrint _ = ""
 
-readableType :: Type -> String
-readableType (NamedType name) = name
-readableType (Type Pointer t) = readableType t ++ " *"
-readableType (Type Value t) = readableType t
-readableType (FunctionPointer retType argTypes) = readableType retType ++ "(" ++ intercalate "," (map readableType argTypes) ++ ")"
-readableType (Array arrSize t) = readableType t ++ "[" ++ show arrSize ++ "]"
-readableType (StructType (StructDef structName _)) = structName
+    prettyPrintLong (StructDef name vars) =
+        "struct " ++ name ++ "{\n" ++
+            intercalate "\n" (map ((++ ";") . ("    " ++ ) . prettyPrint) vars) ++ "\n" ++
+        "};"
+    prettyPrintLong (FuncDef retType name args body) =
+        prettyPrint retType ++ " " ++ name ++ "(" ++ intercalate "," (map prettyPrint args) ++ ") {\n" ++
+            intercalate "\n" (map (("    " ++) . prettyPrintLong) body) ++ "\n" ++
+        "}"
+    prettyPrintLong e = prettyPrint e
 
-readableVar :: Var -> String
-readableVar (Var t varName) = readableType t ++ " " ++ varName
+instance PrettyPrint CStatement where
+    prettyPrint (ExprStatement expr) = prettyPrint expr ++ ";"
+    prettyPrint (Return Nothing) = "return;"
+    prettyPrint (Return (Just expr)) = "return " ++ prettyPrint expr ++ ";"
+    prettyPrint (VarDef var Nothing) = prettyPrint var ++ ";"
+    prettyPrint (VarDef var (Just ini)) = prettyPrint var ++ " = " ++ prettyPrint ini ++ ";"
+    prettyPrint (IfStatement cond _ _) = "if (" ++ prettyPrint cond ++ ")"
+    prettyPrint (ElseBlock _) = "else"
+    prettyPrint (WhileStatement cond _) = "while (" ++ prettyPrint cond ++ ")"
+    prettyPrint (ForStatement ini cond step _) = "for (" ++ prettyPrint ini ++ " " ++ prettyPrint cond ++ "; " ++ init (prettyPrint step) ++ ")"
+    prettyPrint (Assign op accessExpr expr) = prettyPrint accessExpr ++ " " ++ maybeOp op ++ "= " ++ prettyPrint expr ++ ";"
+    prettyPrint (Annotated annotations stmt) = prettyPrint stmt
+
+    prettyPrintLong st@(ForStatement _ _ _ body) =
+        prettyPrint st ++ " {\n" ++
+            intercalate "\n" (map (("    " ++) . prettyPrintLong) body) ++ "\n" ++
+        "}"
+    prettyPrintLong st@(WhileStatement _ body) =
+        prettyPrint st ++ " {\n" ++
+            intercalate "\n" (map (("    " ++) . prettyPrintLong) body) ++ "\n" ++
+        "}"
+    prettyPrintLong st@(IfStatement _ elseBlock body) =
+        prettyPrint st ++ " {\n" ++
+            intercalate "\n" (map (("    " ++) . prettyPrintLong) body) ++ "\n" ++
+        "} " ++ fromMaybe "" (prettyPrintLong <$> elseBlock)
+    prettyPrintLong st@(ElseBlock body) =
+        " " ++ prettyPrint st ++ " {\n" ++
+            intercalate "\n" (map (("    " ++) . prettyPrintLong) body) ++ "\n" ++
+        "}"
+    prettyPrintLong (Annotated annotations stmt) =
+        intercalate "\n" (map prettyPrint annotations) ++ "\n"
+        ++ prettyPrintLong stmt
+    prettyPrintLong st = prettyPrint st
+
+instance PrettyPrint CExpression where
+    prettyPrint (LitInt n) = show n
+    prettyPrint (LitString s) = show s
+    prettyPrint (LitChar c) = show c
+    prettyPrint (LitFloat f) = show f
+    prettyPrint NULL = "NULL"
+    prettyPrint (VarRef x) = x
+    prettyPrint (CBinaryOp op a b) = "(" ++ prettyPrint a ++ " " ++ prettyPrint op ++ " " ++ prettyPrint b ++ ")"
+    prettyPrint (FuncCall funcName args) = funcName ++ "(" ++ intercalate ", " (map prettyPrint args) ++ ")"
+    prettyPrint (CPrefix Dereference expr) = "(" ++ prettyPrint Dereference ++ prettyPrint expr ++ ")"
+    prettyPrint (CPrefix op expr) = prettyPrint op ++ prettyPrint expr
+    prettyPrint (CPostfix op expr) = prettyPrint expr ++ prettyPrint op
+    prettyPrint (CArrayAccess accessExpr expr) = prettyPrint accessExpr ++ "[" ++ prettyPrint expr ++ "]"
+    prettyPrint (MemberAccess a b) = prettyPrint a ++ "." ++ prettyPrint b
+
+instance PrettyPrint Type where
+    prettyPrint (NamedType name) = name
+    prettyPrint (Type Pointer t) = prettyPrint t ++ " *"
+    prettyPrint (Type Value t) = prettyPrint t
+    prettyPrint (FunctionPointer retType argTypes) = prettyPrint retType ++ "(" ++ intercalate "," (map prettyPrint argTypes) ++ ")"
+    prettyPrint (Array arrSize t) = prettyPrint t ++ "[" ++ show arrSize ++ "]"
+    prettyPrint (StructType (StructDef structName _)) = structName
+
+instance PrettyPrint Var where
+    prettyPrint (Var t varName) = prettyPrint t ++ " " ++ varName
+
+instance PrettyPrint CFile where
+    prettyPrint (CFile _ elements) = intercalate "\n\n" $ map prettyPrint elements
+
+cBooleanOps = ["||", "&&", ">", "<", ">=", "<="]
 
 maybeOp :: Maybe BinaryOp -> String
 maybeOp Nothing = ""
-maybeOp (Just op) = readableOp op
-
-readable :: CStatement -> String
-readable (ExprStatement expr) = readableExpr expr ++ ";"
-readable (Return Nothing) = "return;"
-readable (Return (Just expr)) = "return " ++ readableExpr expr ++ ";"
-readable (VarDef var Nothing) = readableVar var ++ ";"
-readable (VarDef var (Just ini)) = readableVar var ++ " = " ++ readableExpr ini ++ ";"
-readable (IfStatement cond _ _) = "if (" ++ readableExpr cond ++ ")"
-readable (ElseBlock _) = "else"
-readable (WhileStatement cond _) = "while (" ++ readableExpr cond ++ ")"
-readable (ForStatement ini cond step _) = "for (" ++ readable ini ++ " " ++ readableExpr cond ++ "; " ++ init (readable step) ++ ")"
-readable (Assign op accessExpr expr) = readableExpr accessExpr ++ " " ++ maybeOp op ++ "= " ++ readableExpr expr ++ ";"
-
-fullReadableSt :: CStatement -> String
-fullReadableSt st@(ForStatement _ _ _ body) =
-    readable st ++ " {\n" ++
-        intercalate "\n" (map (("    " ++) . fullReadableSt) body) ++ "\n" ++
-    "}"
-fullReadableSt st@(WhileStatement _ body) =
-    readable st ++ " {\n" ++
-        intercalate "\n" (map (("    " ++) . fullReadableSt) body) ++ "\n" ++
-    "}"
-fullReadableSt st@(IfStatement _ elseBlock body) =
-    readable st ++ " {\n" ++
-        intercalate "\n" (map (("    " ++) . fullReadableSt) body) ++ "\n" ++
-    "} " ++ fromMaybe "" (fullReadableSt <$> elseBlock)
-fullReadableSt st@(ElseBlock body) =
-    " " ++ readable st ++ " {\n" ++
-        intercalate "\n" (map (("    " ++) . fullReadableSt) body) ++ "\n" ++
-    "}"
-fullReadableSt st = readable st
-
-readableExpr :: CExpression -> String
-readableExpr (LitInt n) = show n
-readableExpr (LitString s) = show s
-readableExpr (LitChar c) = show c
-readableExpr (LitFloat f) = show f
-readableExpr NULL = "NULL"
-readableExpr (VarRef x) = x
-readableExpr (CBinaryOp op a b) = "(" ++ readableExpr a ++ " " ++ readableOp op ++ " " ++ readableExpr b ++ ")"
-readableExpr (FuncCall funcName args) = funcName ++ "(" ++ intercalate ", " (map readableExpr args) ++ ")"
-readableExpr (CPrefix Dereference expr) = "(" ++ readablePrefix Dereference ++ readableExpr expr ++ ")"
-readableExpr (CPrefix op expr) = readablePrefix op ++ readableExpr expr
-readableExpr (CPostfix op expr) = readableExpr expr ++ readablePostfix op
-readableExpr (CArrayAccess accessExpr expr) = readableExpr accessExpr ++ "[" ++ readableExpr expr ++ "]"
-readableExpr (MemberAccess a b) = readableExpr a ++ "." ++ readableExpr b
-
-readableFuncDef :: CElement -> String
-readableFuncDef (FuncDef retType name args _) = readableType retType ++ " " ++ name ++ "(" ++ intercalate "," (map readableVar args) ++ ");"
-readableFuncDef (Inline retType name args _) = readableType retType ++ " " ++ name ++ "(" ++ intercalate "," (map readableVar args) ++ ");"
-
-readableElement :: CElement -> String
-readableElement (StructDef name vars) =
-    "struct " ++ name ++ "{\n" ++
-        intercalate "\n" (map ((++ ";") . ("    " ++ ) . readableVar) vars) ++ "\n" ++
-    "};"
-readableElement (FuncDef retType name args body) =
-    readableType retType ++ " " ++ name ++ "(" ++ intercalate "," (map readableVar args) ++ ") {\n" ++
-        intercalate "\n" (map (("    " ++) . fullReadableSt) body) ++ "\n" ++
-    "}"
-
-readableFile :: CFile -> String
-readableFile (CFile _ elements) = intercalate "\n\n" $ map readableElement elements
+maybeOp (Just op) = prettyPrint op
 

@@ -1,8 +1,10 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE GADTs #-}
 
 module Compiler.Types where
 
-import Control.Lens
+import Control.Lens ((^.), view, over, makeLenses, set)
 import Control.Monad.State
 
 import Data.List (isPrefixOf, find)
@@ -12,8 +14,16 @@ import Data.Maybe (fromMaybe, isJust)
 
 import CLanguage
 import MIPSLanguage
+import Util
 
-import System.IO.Unsafe
+data Warning where
+    Warning :: forall t. PrettyPrint t => Context t -> String -> Warning
+
+instance Show Warning where
+    show (Warning context message) =
+        case context ^. funcName of
+            Nothing -> prettyPrint (context ^. val) ++ ": " ++ message
+            Just fname -> fname ++ ": " ++ prettyPrint (context ^. val) ++ ": " ++ message
 
 data CompileOptions = CompileOptions
     { _optimizeLevel :: Int
@@ -60,10 +70,10 @@ data Environment = Environment
     , _global :: Global
     , _local :: Local
     , _compiled :: Map String [MIPSInstruction] -- The compiled assembly for all functions that have been compiled so far.
+    , _warnings :: [Warning]
     , _compileOptions :: CompileOptions }
     deriving Show
 makeLenses ''Environment
-
 
 saveKData :: String -> String -> State Environment String
 saveKData dataType dataVal = do
@@ -196,10 +206,10 @@ purgeRegTypesEnv :: [String] -> Environment -> Environment
 purgeRegTypesEnv rTypes env = foldr purgeRegTypeEnv env rTypes
 
 emptyEnvironment :: Environment
-emptyEnvironment = Environment (CFile "" []) (Data [] []) (Global [] Map.empty "") (Local 0 Map.empty Map.empty) Map.empty defaultCompileOptions
+emptyEnvironment = Environment (CFile "" []) (Data [] []) (Global [] Map.empty "") (Local 0 Map.empty Map.empty) Map.empty [] defaultCompileOptions
 
 newEnvironment :: CompileOptions -> CFile -> Environment
-newEnvironment opts file = Environment file (Data [] []) (Global [] Map.empty "") (Local 0 Map.empty Map.empty) Map.empty opts
+newEnvironment opts file = Environment file (Data [] []) (Global [] Map.empty "") (Local 0 Map.empty Map.empty) Map.empty [] opts
 
 resetLocal :: Environment -> Environment
 resetLocal = set local $ Local 0 Map.empty Map.empty

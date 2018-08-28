@@ -1,5 +1,15 @@
 module Util where
 
+import Control.Applicative
+
+import Data.Maybe
+
+class PrettyPrint a where
+    prettyPrint :: a -> String
+
+    prettyPrintLong :: a -> String
+    prettyPrintLong = prettyPrint
+
 findSplit :: (a -> Bool) -> [a] -> Maybe ([a], a, [a])
 findSplit f = findSplit' []
     where
@@ -35,4 +45,26 @@ condM f v thenF elseF = do
 
 prependA :: Applicative f => a -> f [a] -> f [a]
 prependA x xs = (:) <$> pure x <*> xs
+
+-- | Match each function in the list with at most one element in the input list.
+-- If all functions match with at least one distinct element (elements cannot be matched twice),
+-- then will return Just matches, otherwise, returns Nothing
+matchSet :: Eq b => [a -> Maybe b] -> [a] -> Maybe [b]
+matchSet fs xs = selectNoOverlap $ map (($ xs) . mapMaybe) fs
+
+safeHead :: [a] -> Maybe a
+safeHead [] = Nothing
+safeHead (x:_) = Just x
+
+-- | Select one element from each list so that no value is selected twice, if possible.
+-- Otherwise, returns Nothing.
+selectNoOverlap :: Eq a => [[a]] -> Maybe [a]
+selectNoOverlap = selectNoOverlap' []
+    where
+        selectNoOverlap' :: Eq a => [a] -> [[a]] -> Maybe [a]
+        selectNoOverlap' _ [] = Just []
+        selectNoOverlap' ignore (xs:xss) =
+            safeHead [x : selection | x <- xs, x `notElem` ignore,
+                                      let selected = selectNoOverlap' (x : ignore) xss,
+                                      isJust selected, let selection = fromJust selected]
 

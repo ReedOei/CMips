@@ -12,8 +12,7 @@ import Data.Ord (comparing)
 import CLanguage
 import Compiler.Types
 import MIPSLanguage
-
-import System.IO.Unsafe
+import Util
 
 sizeof :: Type -> Int
 sizeof (NamedType "char") = 1
@@ -242,7 +241,7 @@ resolveType expr@(CBinaryOp _ a b) = do
     if aType == bType || (isNumericType aType && isNumericType bType) then
         pure $ getPriorityType aType bType
     else
-        error $ "Types in expression '" ++ readableExpr expr ++ "' don't match (" ++ show aType ++ " and " ++ show bType ++ ")"
+        error $ "Types in expression '" ++ prettyPrint expr ++ "' don't match (" ++ show aType ++ " and " ++ show bType ++ ")"
 
 resolveType expr = error $ "Unexpected expression type: " ++ show expr
 

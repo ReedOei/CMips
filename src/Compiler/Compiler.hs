@@ -2,7 +2,7 @@
 
 module Compiler.Compiler where
 
-import Control.Lens (view, over)
+import Control.Lens ((^.), view, over)
 import Control.Monad
 import Control.Monad.State
 
@@ -50,7 +50,10 @@ compileWith opts file = mainCompile opts <$> preprocessor file
 mainCompile :: CompileOptions -> CFile -> Either [Warning] MIPSFile
 mainCompile opts file@(CFile fname initElements) =
     case analyze file of
-        [] -> Right $ MIPSFile fname sections $ filter (not . null) instructions
+        [] ->
+            case env ^. warnings of
+                [] -> Right $ MIPSFile fname sections $ filter (not . null) instructions
+                warnings -> Left warnings
         warnings -> Left warnings
     where
         sections = [generateDataSection "data" d, generateDataSection "kdata" kd, MIPSSection "text" []]
@@ -118,7 +121,7 @@ compileElement func@(FuncDef t funcName args statements) =
 
 
         let asm = Label label :
-                  Comment (readableFuncDef func) :
+                  Comment (prettyPrint func) :
                   saveStack reserved saveRegs ++
                   finalInstr ++
                   restoreStack reserved saveRegs ++
@@ -137,7 +140,7 @@ compileElement func@(Inline t funcName args statements) = do
     (label, funcEnd) <- funcLabel funcName
 
     let asm = Label label :
-              Comment (readableFuncDef func) :
+              Comment (prettyPrint func) :
               map (\str -> transformLitAsm (Inst LIT_ASM str "" "")) statements
 
     modify $ over compiled (Map.insert funcName asm)
@@ -261,7 +264,7 @@ handleIfStatement st@(ElseBlock statements) = do
     labelEnd <- getNextLabel "else_end"
     instr <- compileStatements statements
 
-    pure (labelEnd, Empty : Comment (readable st) : instr ++ [Label labelEnd])
+    pure (labelEnd, Empty : Comment (prettyPrint st) : instr ++ [Label labelEnd])
 
 handleIfStatement st@(IfStatement cond branches body) = do
     labelStart <- getNextLabel "if"
@@ -279,13 +282,14 @@ handleIfStatement st@(IfStatement cond branches body) = do
                 (branchEnd, instrs) <- handleIfStatement branch
                 pure $ [Inst OP_J branchEnd "" "", Label labelEnd] ++ instrs
 
-    pure (labelEnd, [Empty, Comment (readable st), Label labelStart] ++ instr ++ [Label labelBody] ++ bodyInstr ++ branchInstr)
+    pure (labelEnd, [Empty, Comment (prettyPrint st), Label labelStart] ++ instr ++ [Label labelBody] ++ bodyInstr ++ branchInstr)
 
 ----------------------------------
 -- Compile statements
 ----------------------------------
 compileStatement :: CStatement -> State Environment [MIPSInstruction]
 compileStatement (CComment str) = pure [Comment str]
+compileStatement (Annotated _ stmt) = compileStatement stmt
 compileStatement st@(VarDef (Var FunctionPointer{} varName) ini) = do
     reg <- useNextRegister "result_save" varName
 
@@ -293,11 +297,11 @@ compileStatement st@(VarDef (Var FunctionPointer{} varName) ini) = do
         Just (VarRef name) -> do
             fInfo <- getFuncLabel name
             case fInfo of
-                Just (funcLabel, _) -> pure [Empty, Comment (readable st), Inst OP_LA reg funcLabel ""]
+                Just (funcLabel, _) -> pure [Empty, Comment (prettyPrint st), Inst OP_LA reg funcLabel ""]
         Just initializer -> do
             (source, instructions) <- compileExpression initializer
-            pure $ Empty : Comment (readable st) : instructions ++ [Inst OP_MOVE reg source ""]
-        Nothing -> pure [Empty, Comment (readable st)]
+            pure $ Empty : Comment (prettyPrint st) : instructions ++ [Inst OP_MOVE reg source ""]
+        Nothing -> pure [Empty, Comment (prettyPrint st)]
 
 compileStatement (VarDef (Var (NamedType name) varName) ini) = compileStatement (VarDef (Var (Type Value (NamedType name)) varName) ini)
 compileStatement st@(VarDef (Var t@(Type varKind typeName) varName) ini) = do
@@ -305,8 +309,8 @@ compileStatement st@(VarDef (Var t@(Type varKind typeName) varName) ini) = do
 
     case ini of
         -- If there's no initializer, all we need to do is take note of the fact that this variable exists
-        Nothing -> pure [Empty, Comment (readable st)]
-        Just (LitInt n) -> pure [Empty, Comment (readable st), Inst OP_LI reg (show n) ""]
+        Nothing -> pure [Empty, Comment (prettyPrint st)]
+        Just (LitInt n) -> pure [Empty, Comment (prettyPrint st), Inst OP_LI reg (show n) ""]
         Just initializer -> do
             (source, instructions) <- compileExpression initializer
 
@@ -315,7 +319,7 @@ compileStatement st@(VarDef (Var t@(Type varKind typeName) varName) ini) = do
 
             convertInstr <- convert (source, initType) (reg, varType)
 
-            pure $ Empty : Comment (readable st) : instructions ++ convertInstr
+            pure $ Empty : Comment (prettyPrint st) : instructions ++ convertInstr
 
 
 compileStatement ifStatement@IfStatement{} = do
@@ -330,13 +334,13 @@ compileStatement st@(WhileStatement cond body) = do
     instr <- compileCondition labelBody labelEnd cond
     bodyInstr <- compileStatements body
 
-    pure $ [Empty, Comment (readable st), Label labelStart] ++ instr ++ [Label labelBody] ++ bodyInstr ++ [Inst OP_J labelStart "" "", Label labelEnd]
+    pure $ [Empty, Comment (prettyPrint st), Label labelStart] ++ instr ++ [Label labelBody] ++ bodyInstr ++ [Inst OP_J labelStart "" "", Label labelEnd]
 
 compileStatement st@(ForStatement ini cond step body) = do
     instrIni <- compileStatement ini
     instr <- compileStatement $ WhileStatement cond (body ++ [step])
 
-    pure $ Empty : Comment (readable st) : instrIni ++ instr
+    pure $ Empty : Comment (prettyPrint st) : instrIni ++ instr
 
 compileStatement st@(Return Nothing) = do
     fInfo <- getFuncLabel =<< getCurFunc
@@ -345,7 +349,7 @@ compileStatement st@(Return Nothing) = do
                     Nothing -> error "Unknown current function"
                     Just (_, endLabel) -> endLabel
 
-    pure [Empty, Comment (readable st), Inst OP_J funcEnd "" ""]
+    pure [Empty, Comment (prettyPrint st), Inst OP_J funcEnd "" ""]
 
 compileStatement st@(Return (Just expr)) = do
     (source, instr) <- compileExpression expr
@@ -363,7 +367,7 @@ compileStatement st@(Return (Just expr)) = do
 
     convertInstr <- convert (source, exprType) ("v0", retType)
 
-    pure $ Empty : Comment (readable st) : instr ++ convertInstr ++ [Inst OP_J funcEnd "" ""]
+    pure $ Empty : Comment (prettyPrint st) : instr ++ convertInstr ++ [Inst OP_J funcEnd "" ""]
 
 compileStatement (Assign (Just op) lhs rhs) = compileStatement $ Assign Nothing lhs (CBinaryOp op lhs rhs)
 compileStatement st@(Assign Nothing lhs rhs) = do
@@ -390,12 +394,12 @@ compileStatement st@(Assign Nothing lhs rhs) = do
                 assign <- convert (source, rhsType) (reg, lhsType)
                 pure (reg, [], assign)
 
-    pure $ Empty : Comment (readable st) : accessInstr ++ instr ++ postAccessInstr
+    pure $ Empty : Comment (prettyPrint st) : accessInstr ++ instr ++ postAccessInstr
 
 compileStatement st@(ExprStatement expr) = do
     (_, instr) <- compileExpression expr
 
-    pure $ Empty : Comment (readable st) : instr
+    pure $ Empty : Comment (prettyPrint st) : instr
 
 ---------------------------------------------
 -- Compile Expressions
@@ -502,7 +506,7 @@ compileExpressionTemp (CArrayAccess accessExpr expr) = do
     (source, instr) <- compileExpressionTemp expr
     (access, accessInstr) <- compileExpressionTemp accessExpr
 
-    dest <- useNextRegister "result_save" $ readableExpr accessExpr ++ "_access"
+    dest <- useNextRegister "result_save" $ prettyPrint accessExpr ++ "_access"
     varType <- resolveType (CPrefix Dereference accessExpr) >>= elaborateType
 
     doAccess <- case accessExpr of

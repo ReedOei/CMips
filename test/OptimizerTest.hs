@@ -14,10 +14,14 @@ import Simulator
 import Optimizer
 import MIPSLanguage
 
-faster program = do
-    (outputNoOpt, stateNoOpt) <- execute <$> (compileWith (set optimizeLevel 0 defaultCompileOptions) =<< program)
+compileWithExecute options program = do
+    Right compiled <- compileWith options program
+    pure $ execute compiled
 
-    (outputOpt, stateOpt) <- execute <$> (compileWith (set optimizeLevel 1 defaultCompileOptions) =<< program)
+faster program = do
+    (outputNoOpt, stateNoOpt) <- compileWithExecute (set optimizeLevel 0 defaultCompileOptions) program
+
+    (outputOpt, stateOpt) <- compileWithExecute (set optimizeLevel 1 defaultCompileOptions) program
 
     outputOpt `shouldBe` outputNoOpt
 
@@ -28,7 +32,7 @@ faster program = do
 
     liftIO $ putStrLn $ "Program takes " ++ show (noOptTime - optTime) ++ " fewer instructions (" ++ show (fromIntegral optTime / fromIntegral noOptTime * 100) ++ "%)"
 
-fasterC path = faster (loadFile path)
+fasterC path = faster =<< loadFile path
 
 optimizerTests = do
     describe "optimizeMovedResults" $ do
@@ -56,7 +60,7 @@ optimizerTests = do
         it "improves the speed but doesn't change the result of resolve-constants.c" $
             fasterC "test-res/resolve-constants.c"
         it "improves the speed but doesn't change the result of example.lisp" $
-            faster (compileLisp <$> loadLispFile "test-res/example.lisp")
+            faster =<< (compileLisp <$> loadLispFile "test-res/example.lisp")
         it "improves the speed but doesn't change the result of floats.c" $
             fasterC "test-res/floats.c"
         it "improves the speed but doesn't change the result of inline.c" $

@@ -186,42 +186,11 @@ typeParser = do
     where
         go t '*' = Type Pointer t
 
--- typeParser :: CharParser st Type
--- typeParser = do
---     wsSkip
---     typeName <- do
---         isStruct <- optionMaybe $ try $ string "struct"
---         wsSkip
---         isUnsigned <- optionMaybe $ try $ string "unsigned"
---         wsSkip
---         isLong <- optionMaybe $ try $ string "long"
---         wsSkip
-
---         t <- optionMaybe $ try $ do
---             baseName <- cIdentifier
---             lookAhead (wsSkip >> optionMaybe (many (char '*')) >> wsSkip >> cIdentifier)
-
---             pure baseName
-
---         notFollowedBy (char '(')
-
---         return $ unwords $ catMaybes [isStruct, isUnsigned, isLong, t]
-
---     wsSkip
---     varKindStr <- optionMaybe $ many $ char '*'
---     wsSkip
-
---     pure $ case varKindStr of
---               Just pointers@('*':_) -> foldl go (NamedType typeName) pointers
---               _ -> Type Value $ NamedType typeName
-
---     where
---         go t '*' = Type Pointer t
-
 statementParser :: CharParser st CStatement
 statementParser = do
     wsSkip
-    val <- try returnParser <|>
+    val <- try annotationParser <|>
+           try returnParser <|>
            try varDefParser <|>
            try whileStatementParser <|>
            try ifStatementParser <|>
@@ -236,6 +205,18 @@ statementParser = do
     optional commentParser
 
     pure val
+
+annotationParser :: CharParser st CStatement
+annotationParser = do
+    char '@'
+    annotationName <- many $ noneOf "\n("
+    properties <- between (char '(') (char ')') $ sepBy1 (many1 (noneOf ",)")) (wsSkip >> char ',' >> wsSkip)
+    newlines
+    statement <- statementParser
+
+    case statement of
+        Annotated annotations st -> pure $ Annotated (Annotation annotationName properties : annotations) st
+        _ -> pure $ Annotated [Annotation annotationName properties] statement
 
 varDefParser :: CharParser st CStatement
 varDefParser = do

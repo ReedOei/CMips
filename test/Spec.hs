@@ -8,6 +8,8 @@ import Text.ParserCombinators.Parsec
 import CLanguage
 import Parser
 
+import Analysis.AnalyzerTest
+import Analysis.PatternsTest
 import CompilerTest
 import OptimizerTest
 import ParserTest
@@ -21,4 +23,5 @@ main = hspec $ do
     optimizerTests
     resolverTests
     compilerTests
+    patternsTests
 
