@@ -4,6 +4,8 @@ import Control.Lens ((^.))
 
 import Analysis.Patterns
 import Analysis.Resolution
+import Analysis.Warnings
+
 import CLanguage
 import Compiler.Types
 

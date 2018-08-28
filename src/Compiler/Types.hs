@@ -1,6 +1,4 @@
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE GADTs #-}
 
 module Compiler.Types where
 
@@ -12,18 +10,10 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, isJust)
 
+import Analysis.Warnings
 import CLanguage
 import MIPSLanguage
 import Util
-
-data Warning where
-    Warning :: forall t. PrettyPrint t => Context t -> String -> Warning
-
-instance Show Warning where
-    show (Warning context message) =
-        case context ^. funcName of
-            Nothing -> prettyPrint (context ^. val) ++ ": " ++ message
-            Just fname -> fname ++ ": " ++ prettyPrint (context ^. val) ++ ": " ++ message
 
 data CompileOptions = CompileOptions
     { _optimizeLevel :: Int

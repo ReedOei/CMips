@@ -23,5 +23,6 @@ main = hspec $ do
     optimizerTests
     resolverTests
     compilerTests
+    analyzerTests
     patternsTests
 

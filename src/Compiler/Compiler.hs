@@ -16,6 +16,8 @@ import Data.Maybe (fromMaybe, isNothing)
 import Text.ParserCombinators.Parsec (parse)
 
 import Analysis.Analyzer
+import Analysis.Warnings
+
 import Compiler.Resolver
 import Compiler.Types
 import Optimizer
