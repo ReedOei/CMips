@@ -9,9 +9,9 @@ import CLanguage
 import Compiler.Resolver
 import Compiler.Types
 
-asteroidStruct = StructDef "Asteroid" [Var (Type Value (NamedType "int")) "yx",Var (Type Value (NamedType "int")) "points"]
-asteroidMapStruct = StructDef "AsteroidMap" [Var (Type Value (NamedType "unsigned int")) "length",Var (Array 50 (Type Value (NamedType "Asteroid"))) "asteroids"]
-canvasStruct = StructDef "Canvas" [Var (Type Value (NamedType "unsigned int")) "height",Var (Type Value (NamedType "unsigned int")) "width",Var (Type Value (NamedType "unsigned char")) "pattern",Var (Type Pointer (Type Pointer (NamedType "char"))) "canvas"]
+asteroidStruct = StructDef "Asteroid" [Var [] (Type Value (NamedType "int")) "yx",Var [] (Type Value (NamedType "int")) "points"]
+asteroidMapStruct = StructDef "AsteroidMap" [Var [] (Type Value (NamedType "unsigned int")) "length",Var [] (Array 50 (Type Value (NamedType "Asteroid"))) "asteroids"]
+canvasStruct = StructDef "Canvas" [Var [] (Type Value (NamedType "unsigned int")) "height",Var [] (Type Value (NamedType "unsigned int")) "width",Var [] (Type Value (NamedType "unsigned char")) "pattern",Var [] (Type Pointer (Type Pointer (NamedType "char"))) "canvas"]
 
 testEnv = set file (CFile "test.c" [asteroidStruct, asteroidMapStruct]) emptyEnvironment
 

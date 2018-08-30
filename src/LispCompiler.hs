@@ -163,7 +163,7 @@ compileDef (Define fname args body) = do
     getOrInitFuncType fname types
     updateFuncReturnType fname returnType
 
-    pure $ FuncDef returnType fname [Var (Type Pointer (NamedType "List")) "args"] $ initial ++ [final]
+    pure $ FuncDef returnType fname [Var [] (Type Pointer (NamedType "List")) "args"] $ initial ++ [final]
     where
         doRep curBody (arg, i) =
             let call = Evaluate (Identifier "car") [iterate (\prev -> Evaluate (Identifier "cdr") [prev]) (Identifier "args") !! i] in
@@ -240,13 +240,13 @@ compileExpr fname (Evaluate (Identifier called) args) = do
                 argCountName <- useNextId "temp_exec_f_argcount"
                 argsName <- useNextId "temp_exec_f_args"
 
-                let loadSt = VarDef (Var (FunctionPointer defaultType argTypes) loadName) $ Just $ VarRef called
+                let loadSt = VarDef (Var [] (FunctionPointer defaultType argTypes) loadName) $ Just $ VarRef called
 
                 argCount <- length <$> getFuncArgTypes called
-                let argCountSt = VarDef (Var (NamedType "int") argCountName) $ Just $ LitInt argCount
+                let argCountSt = VarDef (Var [] (NamedType "int") argCountName) $ Just $ LitInt argCount
 
                 let argList = foldl (\cur newArg -> FuncCall "cons" [newArg, cur]) NULL $ reverse exprs
-                let argSt = VarDef (Var (Type Pointer (NamedType "List")) argsName) $ Just argList
+                let argSt = VarDef (Var [] (Type Pointer (NamedType "List")) argsName) $ Just argList
                 let callSeq = map (\st -> (NamedType "void", Right st)) [loadSt, argCountSt, argSt]
 
                 if length exprs == argCount then -- Just execute it.
@@ -271,10 +271,10 @@ compileExpr fname (Evaluate expr args) = do
 
     let initExpr = init compiledExpr
     let (_, Left finalExpr) = last compiledExpr
-    let loadFSt = VarDef (Var defaultType resultName) $ Just finalExpr
+    let loadFSt = VarDef (Var [] defaultType resultName) $ Just finalExpr
 
     let argList = foldl (\cur newArg -> FuncCall "append" [newArg, cur]) (VarRef resultName) exprs
-    let argSt = VarDef (Var (Type Pointer (NamedType "List")) argsName) $ Just argList
+    let argSt = VarDef (Var [] (Type Pointer (NamedType "List")) argsName) $ Just argList
 
     let resSt = FuncCall "apply" [VarRef argsName]
 

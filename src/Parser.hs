@@ -181,7 +181,7 @@ typeParser = do
 
     pure $ case varKindStr of
               Just pointers@('*':_) -> foldl go (NamedType typeName) pointers
-              _ -> Type Value $ NamedType typeName
+              _ -> NamedType typeName
 
     where
         go t '*' = Type Pointer t
@@ -189,7 +189,7 @@ typeParser = do
 statementParser :: CharParser st CStatement
 statementParser = do
     wsSkip
-    val <- try annotationParser <|>
+    val <- try annotatedParser <|>
            try returnParser <|>
            try varDefParser <|>
            try whileStatementParser <|>
@@ -206,17 +206,25 @@ statementParser = do
 
     pure val
 
-annotationParser :: CharParser st CStatement
+annotationParser :: CharParser st Annotation
 annotationParser = do
     char '@'
     annotationName <- many $ noneOf "\n("
     properties <- between (char '(') (char ')') $ sepBy1 (many1 (noneOf ",)")) (wsSkip >> char ',' >> wsSkip)
-    newlines
-    statement <- statementParser
 
-    case statement of
-        Annotated annotations st -> pure $ Annotated (Annotation annotationName properties : annotations) st
-        _ -> pure $ Annotated [Annotation annotationName properties] statement
+    pure $ Annotation annotationName properties
+
+annotatedParser :: CharParser st CStatement
+annotatedParser = do
+    annotation <- annotationParser
+
+    statement <- Left <$> char '.' <|>
+                 Right <$> (newlines >> statementParser)
+
+    pure $ case statement of
+        Left _ -> Annotated [annotation] Nothing
+        Right (Annotated annotations st) -> Annotated (annotation : annotations) st
+        Right st -> Annotated [annotation] $ Just st
 
 varDefParser :: CharParser st CStatement
 varDefParser = do
@@ -233,6 +241,7 @@ varDefParser = do
 
 varParser :: CharParser st Var
 varParser = do
+    annotations <- try $ sepEndBy (try annotationParser) (many1 (char ' '))
     varType <- typeParser
     (varKind, varName) <- varNameParser
 
@@ -244,14 +253,14 @@ varParser = do
                 Nothing -> varType
                 Just args ->
                     if varKind == Pointer then
-                        let argTypes = map (\(Var varType _) -> varType) args in
+                        let argTypes = map (\(Var _ varType _) -> varType) args in
                             FunctionPointer varType argTypes
                     else
                         error "Cannot have arguments to a variable that is not a function pointer!"
 
     case arrSize of
-        Nothing -> pure $ Var tempType varName
-        Just arrSize -> pure $ Var (Array arrSize tempType) varName
+        Nothing -> pure $ Var annotations tempType varName
+        Just arrSize -> pure $ Var annotations (Array arrSize tempType) varName
 
     where
         innerParser = do

@@ -2,26 +2,22 @@ module Analysis.Analyzer where
 
 import Control.Lens ((^.))
 
+import Analysis.Analyzers.ArrayLength
 import Analysis.Patterns
 import Analysis.Resolution
+import Analysis.Types
 import Analysis.Warnings
 
 import CLanguage
+import Compiler.Context
 import Compiler.Types
+import Parser
+
+doAnalysis :: FilePath -> IO [Warning]
+doAnalysis path = do
+    f <- loadFile path
+    pure $ analyze f
 
 analyze :: CFile -> [Warning]
-analyze file = [] -- analyzeArrayBounds file
-
-analyzeArrayBounds :: CFile -> [Warning]
-analyzeArrayBounds file = concatMap analyzeArrayBounds' matches
-    where
-        matches = allFileMatches arrayAccessPattern file
-        analyzeArrayBounds' context =
-            case context ^. val of
-                CArrayAccess a b ->
-                    case resolveConstant $ exprContext context b of
-                        Just (LitInt i) ->
-                            [Warning context "Array access with negative index!" | i < 0]
-                        _ -> []
-                _ -> []
+analyze file = analyzeArrayBounds file
 

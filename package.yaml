@@ -30,6 +30,8 @@ dependencies:
 - lens
 - optparse-applicative
 - floating-bits
+- sbv
+- flow
 
 library:
   source-dirs: src

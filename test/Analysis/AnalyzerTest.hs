@@ -4,6 +4,7 @@ import Test.Hspec
 
 import Analysis.Analyzer
 import Analysis.Patterns
+import Analysis.Analyzers.ArrayLength
 import Parser
 
 analyzerTests =

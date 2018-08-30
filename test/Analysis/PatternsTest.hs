@@ -2,9 +2,11 @@ module Analysis.PatternsTest where
 
 import Test.Hspec
 
+import Analysis.Analyzers.ArrayLength
 import Analysis.Patterns
 
 import CLanguage
+import Compiler.Context
 import Parser
 
 patternsTests =

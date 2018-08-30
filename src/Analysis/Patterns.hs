@@ -9,6 +9,7 @@ import Data.List
 import Data.Maybe
 
 import CLanguage
+import Compiler.Context
 import Util
 
 class (Show a, Enumerable b) => Matchable a b where
@@ -38,11 +39,4 @@ instance Show ExprPattern where
 
 instance Matchable ExprPattern CExpression where
     match (ExprPattern _ f) = f
-
-arrayAccessSearch :: CExpression -> Bool
-arrayAccessSearch (CArrayAccess _ _) = True
-arrayAccessSearch _ = False
-
-arrayAccessPattern :: ExprPattern
-arrayAccessPattern = ExprPattern "all array accesses" arrayAccessSearch
 

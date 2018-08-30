@@ -34,20 +34,24 @@ parserTests = do
     describe "varParser" $ do
         it "parses normal variables" $ do
             let (Right res) = parse varParser "" "int x"
-            res `shouldBe` Var (Type Value (NamedType "int")) "x"
+            res `shouldBe` Var [] (Type Value (NamedType "int")) "x"
+
+        it "parses annotations with variables" $ do
+            let (Right res) = parse varParser "" "@Length(size) int* x"
+            res `shouldBe` Var [Annotation "Length" ["size"]] (Type Pointer (NamedType "int")) "x"
 
         it "parses function pointers variables" $ do
             let (Right res) = parse varParser "" "int (*f)(int)"
-            res `shouldBe` Var (FunctionPointer (Type Value (NamedType "int")) [Type Value (NamedType "int")]) "f"
+            res `shouldBe` Var [] (FunctionPointer (Type Value (NamedType "int")) [Type Value (NamedType "int")]) "f"
 
     describe "varDefParser" $ do
         it "parses variable declarations" $ do
             let (Right res) = parse varDefParser "" "int x = 4;"
-            res `shouldBe` VarDef (Var (Type Value (NamedType "int")) "x") (Just (LitInt 4))
+            res `shouldBe` VarDef (Var [] (Type Value (NamedType "int")) "x") (Just (LitInt 4))
 
         it "parses variable declarations with struct" $ do
             let (Right res) = parse varDefParser "" "struct Asteroid *a;"
-            res `shouldBe` VarDef (Var (Type Pointer (NamedType "struct Asteroid")) "a") Nothing
+            res `shouldBe` VarDef (Var [] (Type Pointer (NamedType "struct Asteroid")) "a") Nothing
 
         -- it "parses variable declarations with unsigned" $ do
         --     let (Right res) = parse varDefParser "" "unsigned x = 10;"
@@ -59,7 +63,7 @@ parserTests = do
 
         it "parses variable declarations with both unsigned and long" $ do
             let (Right res) = parse varDefParser "" "unsigned long int x = 10;"
-            res `shouldBe` VarDef (Var (Type Value (NamedType "unsigned long int")) "x") (Just (LitInt 10))
+            res `shouldBe` VarDef (Var [] (Type Value (NamedType "unsigned long int")) "x") (Just (LitInt 10))
 
     describe "block" $ do
         it "parses a block of C statements without error" $

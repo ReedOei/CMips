@@ -6,6 +6,7 @@ module Analysis.Warnings where
 import Control.Lens ((^.))
 
 import CLanguage
+import Compiler.Context
 import Util
 
 data Warning where

@@ -1,6 +1,3 @@
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TemplateHaskell #-}
-
 module CLanguage where
 
 import Control.Lens ((^.), makeLenses)
@@ -28,7 +25,7 @@ data Type = NamedType String
           | Array Int Type -- An array of fixed size (like int arr[5];)
     deriving (Show, Eq)
 
-data Var = Var Type String
+data Var = Var [Annotation] Type String
     deriving (Show, Eq)
 
 data CElement = Preprocessor PreKind String
@@ -51,7 +48,7 @@ data CStatement = Return (Maybe CExpression)
                 | Assign (Maybe BinaryOp) CExpression CExpression
                 | ExprStatement CExpression
                 | CComment String
-                | Annotated [Annotation] CStatement
+                | Annotated [Annotation] (Maybe CStatement)
     deriving (Show, Eq)
 
 data PrefixOp = PreIncrement
@@ -86,102 +83,6 @@ data CExpression = VarRef String
 
 data CFile = CFile String [CElement]
     deriving (Show, Eq)
-
-data Parent = FileParent CFile
-            | ElementParent CElement
-            | StatementParent CStatement
-            | ExprParent CExpression
-    deriving (Show, Eq)
-
-data Context t = Context
-    { _parents :: [Parent]
-    , _funcName :: Maybe String
-    , _val :: t }
-makeLenses ''Context
-
-deriving instance Show t => Show (Context t)
-deriving instance Eq t => Eq (Context t)
-
-defaultContext file = Context [FileParent file] Nothing
-elemContext (Context parents _ elem@(FuncDef _ funcName _ _)) = Context (ElementParent elem : parents) (Just funcName)
-elemContext (Context parents funcName elem) = Context (ElementParent elem : parents) funcName
-stmtContext (Context parents funcName stmt) = Context (StatementParent stmt : parents) funcName
-exprContext (Context parents funcName expr) = Context (ExprParent expr : parents) funcName
-
-class Enumerable t where
-    enumElement :: Context CElement -> [Context t]
-    enumStatement :: Context CStatement -> [Context t]
-    enumExpr :: Context CExpression -> [Context t]
-
-    enumFile :: CFile -> [Context t]
-    enumFile file@(CFile _ elements) = concatMap (enumElement . defaultContext file) elements
-
-instance Enumerable CElement where
-    enumElement context = [context]
-    enumStatement _ = []
-    enumExpr _ = []
-
-instance Enumerable CStatement where
-    enumElement context =
-        let contexts = map (elemContext context) $
-                case context ^. val of
-                    FuncDef _ _ _ ss -> ss
-                    _ -> []
-        in contexts ++ concatMap enumStatement contexts
-
-    enumStatement context =
-        let contexts = map (stmtContext context) $
-                case context ^. val of
-                    IfStatement _ elseBlock ss -> ss ++ maybe [] (\(ElseBlock inner) -> inner) elseBlock
-                    ElseBlock ss -> ss
-                    WhileStatement _ ss -> ss
-                    ForStatement init _ step ss -> init : step : ss
-                    _ -> []
-            in contexts ++ concatMap enumStatement contexts
-
-    enumExpr _ = []
-
-instance Enumerable CExpression where
-    -- Gather all the statements in the element, then enumerate through the expressions using the below
-    enumElement context =
-        let contexts = map (elemContext context) $
-                case context ^. val of
-                    FuncDef _ _ _ ss -> ss
-                    _ -> []
-        in concatMap enumStatement contexts
-
-    enumStatement context =
-        let statementContexts = map (stmtContext context) $
-                case context ^. val of
-                    IfStatement cond elseBlock ss -> ss ++ maybe [] (\(ElseBlock inner) -> inner) elseBlock
-                    WhileStatement cond ss -> ss
-                    ForStatement init _ step ss -> init : step : ss
-                    ElseBlock ss -> ss
-                    Annotated _ stmt -> [stmt]
-                    _ -> []
-            exprContexts = map (stmtContext context) $
-                case context ^. val of
-                    Return (Just expr) -> [expr]
-                    IfStatement cond _ _ -> [cond]
-                    WhileStatement cond _ -> [cond]
-                    ForStatement _ cond _ _ -> [cond]
-                    Assign _ a b -> [a,b]
-                    ExprStatement expr -> [expr]
-                    VarDef _ (Just expr) -> [expr]
-                    _ -> []
-            in exprContexts ++ concatMap enumStatement statementContexts ++ concatMap enumExpr exprContexts
-
-    enumExpr context =
-        let contexts = map (exprContext context) $
-                case context ^. val of
-                    MemberAccess a b -> [a,b]
-                    FuncCall _ exprs -> exprs
-                    CPrefix _ expr -> [expr]
-                    CPostfix _ expr -> [expr]
-                    CArrayAccess a b -> [a, b]
-                    CBinaryOp _ a b -> [a, b]
-                    _ -> []
-        in contexts ++ concatMap enumExpr contexts
 
 cArithOps = [("*", Mult), ("/", Div), ("%", Mod), ("+", Add), ("-", Minus),
              ("||", Or), ("&&", And),
@@ -241,7 +142,10 @@ instance PrettyPrint CStatement where
     prettyPrint (WhileStatement cond _) = "while (" ++ prettyPrint cond ++ ")"
     prettyPrint (ForStatement ini cond step _) = "for (" ++ prettyPrint ini ++ " " ++ prettyPrint cond ++ "; " ++ init (prettyPrint step) ++ ")"
     prettyPrint (Assign op accessExpr expr) = prettyPrint accessExpr ++ " " ++ maybeOp op ++ "= " ++ prettyPrint expr ++ ";"
-    prettyPrint (Annotated annotations stmt) = prettyPrint stmt
+    prettyPrint (Annotated annotations stmt) =
+        case stmt of
+            Nothing -> ""
+            Just st -> prettyPrint st
 
     prettyPrintLong st@(ForStatement _ _ _ body) =
         prettyPrint st ++ " {\n" ++
@@ -260,8 +164,10 @@ instance PrettyPrint CStatement where
             intercalate "\n" (map (("    " ++) . prettyPrintLong) body) ++ "\n" ++
         "}"
     prettyPrintLong (Annotated annotations stmt) =
-        intercalate "\n" (map prettyPrint annotations) ++ "\n"
-        ++ prettyPrintLong stmt
+        intercalate "\n" (map prettyPrint annotations) ++ "\n" ++
+        case stmt of
+            Nothing -> "."
+            Just st -> prettyPrintLong st
     prettyPrintLong st = prettyPrint st
 
 instance PrettyPrint CExpression where
@@ -288,7 +194,7 @@ instance PrettyPrint Type where
     prettyPrint (StructType (StructDef structName _)) = structName
 
 instance PrettyPrint Var where
-    prettyPrint (Var t varName) = prettyPrint t ++ " " ++ varName
+    prettyPrint (Var annotations t varName) = intercalate " " (map prettyPrint annotations) ++ prettyPrint t ++ " " ++ varName
 
 instance PrettyPrint CFile where
     prettyPrint (CFile _ elements) = intercalate "\n\n" $ map prettyPrint elements
@@ -298,4 +204,6 @@ cBooleanOps = ["||", "&&", ">", "<", ">=", "<="]
 maybeOp :: Maybe BinaryOp -> String
 maybeOp Nothing = ""
 maybeOp (Just op) = prettyPrint op
+
+varType (Var _ t _) = t
 

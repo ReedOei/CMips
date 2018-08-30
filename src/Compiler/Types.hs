@@ -124,7 +124,7 @@ isRegType rtype reg = rtype `isPrefixOf` reg && all (`elem` ("1234567890" :: Str
 
 generateArgs :: [Var] -> State Environment [MIPSInstruction]
 generateArgs [] = pure []
-generateArgs (Var _ varName:args) = do
+generateArgs (Var _ _ varName:args) = do
     reg <- useNextRegister "result_save" varName -- Use a saved register to store in case of function calls that would override.
     aReg <- useNextRegister "a" $ varName ++ "arg"
     instr <- generateArgs args

@@ -291,8 +291,9 @@ handleIfStatement st@(IfStatement cond branches body) = do
 ----------------------------------
 compileStatement :: CStatement -> State Environment [MIPSInstruction]
 compileStatement (CComment str) = pure [Comment str]
-compileStatement (Annotated _ stmt) = compileStatement stmt
-compileStatement st@(VarDef (Var FunctionPointer{} varName) ini) = do
+compileStatement (Annotated _ (Just stmt)) = compileStatement stmt
+compileStatement (Annotated _ Nothing) = pure []
+compileStatement st@(VarDef (Var _ FunctionPointer{} varName) ini) = do
     reg <- useNextRegister "result_save" varName
 
     case ini of
@@ -305,8 +306,8 @@ compileStatement st@(VarDef (Var FunctionPointer{} varName) ini) = do
             pure $ Empty : Comment (prettyPrint st) : instructions ++ [Inst OP_MOVE reg source ""]
         Nothing -> pure [Empty, Comment (prettyPrint st)]
 
-compileStatement (VarDef (Var (NamedType name) varName) ini) = compileStatement (VarDef (Var (Type Value (NamedType name)) varName) ini)
-compileStatement st@(VarDef (Var t@(Type varKind typeName) varName) ini) = do
+compileStatement (VarDef (Var annotations (NamedType name) varName) ini) = compileStatement (VarDef (Var annotations (Type Value (NamedType name)) varName) ini)
+compileStatement st@(VarDef (Var _ t@(Type varKind typeName) varName) ini) = do
     reg <- useNextRegister "result_save" varName
 
     case ini of

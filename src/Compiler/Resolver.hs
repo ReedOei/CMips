@@ -24,7 +24,7 @@ sizeof (NamedType "float") = 4
 sizeof (NamedType _) = 4
 sizeof (StructType (StructDef _ vars)) = sum $ map (\t -> max (sizeof t) maxSize) types
     where
-        types = map (\(Var varType _) -> varType) vars
+        types = map varType vars
         maxSize = structPadding types
 sizeof (Type Pointer _) = 4 -- Assume 32 bit pointers.
 sizeof (Type Value t) = sizeof t
@@ -68,10 +68,10 @@ structPadding types = maximum $ map getStructSizes types
 
 structOffset :: CElement -> String -> State Environment Int
 structOffset (StructDef _ members) member = do
-    types <- mapM (\(Var varType _) -> elaborateType varType) members
+    types <- mapM (\(Var _ varType _) -> elaborateType varType) members
     let maxSize = structPadding types
 
-    varTypes <- mapM (\(Var varType _) -> elaborateType varType) $ takeWhile (\(Var _ name) -> name /= member) members
+    varTypes <- mapM (elaborateType . varType) $ takeWhile (\(Var _ _ name) -> name /= member) members
     foldM (\n t -> do
                 newT <- elaborateType t
                 pure $ n + max maxSize (sizeof newT)) 0 varTypes
@@ -108,22 +108,22 @@ resolveFuncType funcName = do
 
     case findFuncCall funcName elements of
         Just (FuncDef retType _ args _) ->
-            Just <$> makeFuncType retType (map (\(Var varType _) -> varType) args)
+            Just <$> makeFuncType retType (map varType args)
         -- Possible function pointer, see if it's a local variable name.
         Nothing -> do
             def <- getCurrentFunction
 
             case find (fPointer funcName) $ getLocalVariables def of
                 Nothing -> pure Nothing
-                Just (Var (FunctionPointer retType argTypes) _) -> Just <$> makeFuncType retType argTypes
+                Just (Var _ (FunctionPointer retType argTypes) _) -> Just <$> makeFuncType retType argTypes
     where
         makeFuncType retType argTypes = (,) <$> elaborateType retType <*> mapM elaborateType argTypes
 
-        fPointer name (Var (FunctionPointer _ _) varName) = name == varName
+        fPointer name (Var _ (FunctionPointer _ _) varName) = name == varName
         fPointer _ _ = False
 
 elaborateTypesVar :: Var -> State Environment Var
-elaborateTypesVar (Var varType varName) = Var <$> elaborateType varType <*> pure varName
+elaborateTypesVar (Var annotations varType varName) = Var <$> pure annotations <*> elaborateType varType <*> pure varName
 
 elaborateTypes :: CElement -> State Environment CElement
 elaborateTypes (FuncDef t funcName vars statements) =
@@ -170,8 +170,8 @@ resolve refName = do
     case curFunc of
         Nothing -> error $ "Unknown current function '" ++ curFuncName ++ "' while trying to resolve '" ++ refName ++ "'"
         Just def ->
-            case find (\(Var _ varName) -> varName == refName) $ getLocalVariables def of
-                Just (Var varType _) -> pure varType
+            case find (\(Var _ _ varName) -> varName == refName) $ getLocalVariables def of
+                Just (Var _ varType _) -> pure varType
                 -- Could be a function name.
                 Nothing -> do
                     fType <- resolveFuncType refName
@@ -230,9 +230,9 @@ resolveType (MemberAccess accessExpr (VarRef name)) = do
                 StructType (StructDef structName vars) -> (structName, vars)
                 t -> error $ "Cannot access member of non-struct type: " ++ show t
 
-    case find (\(Var _ varName) -> varName == name) vars of
+    case find (\(Var _ _ varName) -> varName == name) vars of
         Nothing -> error $ "Reference to struct '" ++ structName ++ "' member '" ++ name ++ "' undefined."
-        Just (Var t _) -> pure t
+        Just (Var _ t _) -> pure t
 
 resolveType expr@(CBinaryOp _ a b) = do
     aType <- resolveType a
