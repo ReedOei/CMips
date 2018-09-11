@@ -9,10 +9,10 @@ import Text.Read
 
 import Analysis.Patterns
 import Analysis.Resolution
-import Analysis.Warnings
 
 import CLanguage
 import Compiler.Context
+import Types
 
 arrayAccessSearch :: CExpression -> Bool
 arrayAccessSearch (CArrayAccess _ _) = True
@@ -29,6 +29,7 @@ analyzeArrayBounds file = concatMap analyzeArrayBounds' matches
             case context ^. val of
                 CArrayAccess a b ->
                     [Warning context (show (arrayLength context))] ++
+                    [Warning context (show (context ^. invariants))] ++
                     case resolveIntConstant $ makeContext context ([], b) of
                         Just xs ->
                             [Warning context "Array access with a possibly negative index!" | any (< 0) xs]

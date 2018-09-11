@@ -12,6 +12,7 @@ import Data.Ord (comparing)
 import CLanguage
 import Compiler.Types
 import MIPSLanguage
+import Types
 import Util
 
 sizeof :: Type -> Int

@@ -1,2 +1,0 @@
-module Analysis.Types where
-

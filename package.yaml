@@ -25,6 +25,7 @@ dependencies:
 - hspec
 - containers
 - mtl
+- transformers
 - split
 - MissingH
 - lens

@@ -12,30 +12,8 @@ import Data.Maybe
 import Flow
 
 import CLanguage
+import Types
 import Util
-
-data Invariant = InvariantExpr CExpression -- Either an expression that is true
-               | InvariantAnnotation Annotation String -- Or an annotation for a particular variable
-    deriving (Show, Eq)
-
-data Parent = FileParent CFile
-            | ElementParent CElement
-            | StatementParent CStatement
-            | ExprParent CExpression
-    deriving (Show, Eq)
-
-data Context t = Context
-    { _parents :: [Parent]
-    , _funcName :: Maybe String
-    , _invariants :: [Invariant]
-    , _val :: t }
-makeLenses ''Context
-
-deriving instance Show t => Show (Context t)
-deriving instance Eq t => Eq (Context t)
-
-class Parentable a where
-    makeParent :: a -> Parent
 
 instance Parentable CFile where
     makeParent = FileParent
@@ -49,48 +27,25 @@ instance Parentable CStatement where
 instance Parentable CExpression where
     makeParent = ExprParent
 
-defaultContext file = Context [FileParent file] Nothing []
-
 elemContext :: Context CElement -> ([Invariant], b) -> Context b
 elemContext context b =
     case context ^. val of
         FuncDef _ fname _ _ -> set funcName (Just fname) $ makeContext context b
         _ -> makeContext context b
 
-makeInvariant :: Invariant -> [Invariant]
-makeInvariant (InvariantExpr (CBinaryOp And a b)) = map InvariantExpr [a,b]
-makeInvariant i = [i]
-
 makeContext :: Parentable a => Context a -> ([Invariant], b) -> Context b
 makeContext context (invs, b) =
-    over invariants (concatMap makeInvariant invs ++) $
+    over invariants (invs ++) $
     over parents (makeParent (context ^. val) :) $
     set val b context
 
-isFuncDef :: String -> CElement -> Bool
-isFuncDef funcName (FuncDef _ check _ _) = funcName == check
-isFuncDef _ _ = False
-
-inFunction :: Enumerable t => String -> CFile -> [Context t]
-inFunction funcName file@(CFile _ elements) =
-    filter (isFuncDef funcName) elements
-    |> head
-    |> defaultContext file
-    |> enumElement
-
-contextFile :: Context t -> Maybe CFile
-contextFile context = foldl (<|>) empty $ map isFile (context ^. parents)
-    where
-        isFile (FileParent file) = Just file
-        isFile _ = Nothing
-
-class Enumerable t where
-    enumElement :: Context CElement -> [Context t]
-    enumStatement :: Context CStatement -> [Context t]
-    enumExpr :: Context CExpression -> [Context t]
-
-    enumFile :: CFile -> [Context t]
-    enumFile file@(CFile _ elements) = concatMap (enumElement . defaultContext file) elements
+enum :: (Enumerable t, Parentable a) => Context a -> [Context t]
+enum context =
+    case makeParent $ context ^. val of
+        FileParent file -> enumFile file
+        ElementParent element -> enumElement $ makeContext context $ ([],) element
+        StatementParent statement -> enumStatement $ makeContext context $ ([],) statement
+        ExprParent expr -> enumExpr $ makeContext context $ ([],) expr
 
 instance Enumerable Var where
     enumElement context =
@@ -143,7 +98,7 @@ instance Enumerable CStatement where
                         map ([InvariantExpr cond],) $ ss ++ maybe [] (\(ElseBlock inner) -> inner) elseBlock
                     ElseBlock ss -> map ([],) ss
                     WhileStatement cond ss -> map ([InvariantExpr cond],) ss
-                    ForStatement init cond step ss -> map ([InvariantExpr cond],) $ init : step : ss
+                    fSt@(ForStatement init cond step ss) -> map ([InvariantExpr cond],) $ init : step : ss
                     _ -> []
             in contexts ++ concatMap enumStatement contexts
 
@@ -164,7 +119,7 @@ instance Enumerable CExpression where
                     IfStatement cond elseBlock ss ->
                         map ([InvariantExpr cond],) $ ss ++ maybe [] (\(ElseBlock inner) -> inner) elseBlock
                     WhileStatement cond ss -> map ([InvariantExpr cond],) ss
-                    ForStatement init cond step ss -> map ([InvariantExpr cond],) $ init : step : ss
+                    fSt@(ForStatement init cond step ss) -> map ([InvariantExpr cond],) $ init : step : ss
                     ElseBlock ss -> map ([],) ss
                     Annotated _ (Just stmt) -> [([], stmt)]
                     _ -> []
@@ -173,7 +128,7 @@ instance Enumerable CExpression where
                     Return (Just expr) -> [([], expr)]
                     IfStatement cond _ _ -> [([], cond)]
                     WhileStatement cond _ -> [([], cond)]
-                    ForStatement _ cond _ _ -> [([], cond)]
+                    fSt@(ForStatement _ cond _ _) -> [([], cond)]
                     Assign _ a b -> map ([],) [a,b]
                     ExprStatement expr -> [([], expr)]
                     VarDef _ (Just expr) -> [([], expr)]

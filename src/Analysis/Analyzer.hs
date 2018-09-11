@@ -5,12 +5,10 @@ import Control.Lens ((^.))
 import Analysis.Analyzers.ArrayLength
 import Analysis.Patterns
 import Analysis.Resolution
-import Analysis.Types
-import Analysis.Warnings
 
 import CLanguage
 import Compiler.Context
-import Compiler.Types
+import Types
 import Parser
 
 doAnalysis :: FilePath -> IO [Warning]

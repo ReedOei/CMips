@@ -16,6 +16,7 @@ import Compiler.Types
 import Parser
 import LispParser
 import LispCompiler
+import Types
 
 data Args = Args
     { _infile :: FilePath,

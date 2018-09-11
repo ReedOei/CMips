@@ -13,6 +13,7 @@ import Parser
 import Simulator
 import Optimizer
 import MIPSLanguage
+import Types
 
 compileWithExecute options program = do
     Right compiled <- compileWith options program

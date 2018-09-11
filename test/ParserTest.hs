@@ -34,7 +34,7 @@ parserTests = do
     describe "varParser" $ do
         it "parses normal variables" $ do
             let (Right res) = parse varParser "" "int x"
-            res `shouldBe` Var [] (Type Value (NamedType "int")) "x"
+            res `shouldBe` Var [] (NamedType "int") "x"
 
         it "parses annotations with variables" $ do
             let (Right res) = parse varParser "" "@Length(size) int* x"
@@ -42,12 +42,12 @@ parserTests = do
 
         it "parses function pointers variables" $ do
             let (Right res) = parse varParser "" "int (*f)(int)"
-            res `shouldBe` Var [] (FunctionPointer (Type Value (NamedType "int")) [Type Value (NamedType "int")]) "f"
+            res `shouldBe` Var [] (FunctionPointer (NamedType "int") [NamedType "int"]) "f"
 
     describe "varDefParser" $ do
         it "parses variable declarations" $ do
             let (Right res) = parse varDefParser "" "int x = 4;"
-            res `shouldBe` VarDef (Var [] (Type Value (NamedType "int")) "x") (Just (LitInt 4))
+            res `shouldBe` VarDef (Var [] (NamedType "int") "x") (Just (LitInt 4))
 
         it "parses variable declarations with struct" $ do
             let (Right res) = parse varDefParser "" "struct Asteroid *a;"
@@ -55,15 +55,15 @@ parserTests = do
 
         -- it "parses variable declarations with unsigned" $ do
         --     let (Right res) = parse varDefParser "" "unsigned x = 10;"
-        --     res `shouldBe` VarDef (Var (Type Value (NamedType "unsigned")) "x") (Just (LitInt 10))
+        --     res `shouldBe` VarDef (Var (NamedType "unsigned") "x") (Just (LitInt 10))
 
         -- it "parses variable declarations with long long" $ do
         --     let (Right res) = parse varDefParser "" "long long x = 10;"
-        --     res `shouldBe` VarDef (Var (Type Value (NamedType "long long")) "x") (Just (LitInt 10))
+        --     res `shouldBe` VarDef (Var (NamedType "long long") "x") (Just (LitInt 10))
 
         it "parses variable declarations with both unsigned and long" $ do
             let (Right res) = parse varDefParser "" "unsigned long int x = 10;"
-            res `shouldBe` VarDef (Var [] (Type Value (NamedType "unsigned long int")) "x") (Just (LitInt 10))
+            res `shouldBe` VarDef (Var [] (NamedType "unsigned long int") "x") (Just (LitInt 10))
 
     describe "block" $ do
         it "parses a block of C statements without error" $

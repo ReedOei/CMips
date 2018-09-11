@@ -8,15 +8,18 @@ import Control.Lens (view)
 import Data.List
 import Data.Maybe
 
+import Analysis.Invariants
+
 import CLanguage
 import Compiler.Context
+import Types
 import Util
 
-class (Show a, Enumerable b) => Matchable a b where
+class (Show a, Enumerable b, Parentable b) => Matchable a b where
     match :: a -> b -> Bool
 
     allFileMatches :: a -> CFile -> [Context b]
-    allFileMatches pattern = filter (match pattern . view val) . enumFile
+    allFileMatches pattern = map processInvariants . filter (match pattern . view val) . enumFile
 
 data ElementPattern = ElementPattern String (CElement -> Bool)
 data StatementPattern = StatementPattern String (CStatement -> Bool)

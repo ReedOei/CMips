@@ -7,10 +7,9 @@ import Analysis.Patterns
 import Analysis.Analyzers.ArrayLength
 import Parser
 
-analyzerTests =
-    describe "arrayBoundsAnalyzer" $
-        it "searches for negative index accesses and reports them" $ do
-            file <- loadFile "test-res/unsafe-array.c"
-
-            length (analyzeArrayBounds file) `shouldBe` 1
+-- TODO: The below currently is not yet implemented
+-- analyzerTests = do
+    -- describe "arrayBoundsAnalyzer" $
+    --     it "searches for negative index accesses and reports them" $ do
+    --         file <- loadFile "test-res/unsafe-array.c"
 

@@ -13,9 +13,8 @@ import qualified Data.Map as Map
 import Compiler.Types
 import MIPSLanguage
 import MIPSParser
+import Types
 import Util
-
-import System.IO.Unsafe
 
 optimize :: [MIPSInstruction] -> State Environment [MIPSInstruction]
 optimize instrs = do

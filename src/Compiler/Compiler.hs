@@ -16,7 +16,6 @@ import Data.Maybe (fromMaybe, isNothing)
 import Text.ParserCombinators.Parsec (parse)
 
 import Analysis.Analyzer
-import Analysis.Warnings
 
 import Compiler.Resolver
 import Compiler.Types
@@ -25,6 +24,7 @@ import CLanguage
 import MIPSLanguage
 import MIPSParser
 import Parser (loadFile)
+import Types
 import Util
 
 import System.IO.Unsafe
@@ -51,12 +51,12 @@ compileWith opts file = mainCompile opts <$> preprocessor file
 
 mainCompile :: CompileOptions -> CFile -> Either [Warning] MIPSFile
 mainCompile opts file@(CFile fname initElements) =
-    case analyze file of
-        [] ->
+    -- case analyze file of
+    --     [] ->
             case env ^. warnings of
                 [] -> Right $ MIPSFile fname sections $ filter (not . null) instructions
                 warnings -> Left warnings
-        warnings -> Left warnings
+        -- warnings -> Left warnings
     where
         sections = [generateDataSection "data" d, generateDataSection "kdata" kd, MIPSSection "text" []]
         (Data d kd) = view dataSections env

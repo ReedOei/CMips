@@ -8,6 +8,7 @@ import Test.Hspec
 import CLanguage
 import Compiler.Resolver
 import Compiler.Types
+import Types
 
 asteroidStruct = StructDef "Asteroid" [Var [] (Type Value (NamedType "int")) "yx",Var [] (Type Value (NamedType "int")) "points"]
 asteroidMapStruct = StructDef "AsteroidMap" [Var [] (Type Value (NamedType "unsigned int")) "length",Var [] (Array 50 (Type Value (NamedType "Asteroid"))) "asteroids"]
