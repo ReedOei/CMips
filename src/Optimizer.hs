@@ -21,13 +21,27 @@ optimize instrs = do
     optLevel <- view (compileOptions . optimizeLevel) <$> get
 
     if optLevel > 0 then
-        optimizeCalls instrs >>=
-        findTemp [] >>=
-               -- -- Repeatedly apply optimizations until there are no changes in the code.
-               (untilM noChange (optimizeArith [] >=>
-                                 optimizeResults >=>
-                                 optimizeFloats >=>
-                                 optimizeJumps) . pure)
+        if optLevel == 1 then
+            findTemp [] instrs >>=
+                   -- -- Repeatedly apply optimizations until there are no changes in the code.
+                   (untilM noChange (optimizeArith [] >=>
+                                     optimizeFloats >=>
+                                     optimizeJumps) . pure)
+        else if optLevel == 2 then
+            findTemp [] instrs >>=
+                   -- -- Repeatedly apply optimizations until there are no changes in the code.
+                   (untilM noChange (optimizeArith [] >=>
+                                     optimizeResults >=>
+                                     optimizeFloats >=>
+                                     optimizeJumps) . pure)
+        else
+            optimizeCalls instrs >>=
+            findTemp [] >>=
+                   -- -- Repeatedly apply optimizations until there are no changes in the code.
+                   (untilM noChange (optimizeArith [] >=>
+                                     optimizeResults >=>
+                                     optimizeFloats >=>
+                                     optimizeJumps) . pure)
     else
         pure instrs
 
@@ -458,15 +472,20 @@ getUnusedRegisters regs = avail \\ regs
 findTemp :: [String] -> [MIPSInstruction] -> State Environment [MIPSInstruction]
 findTemp _ [] = pure []
 findTemp examined (instr:instrs) = do
-    (newInstr:newInstrs) <-
+    res <-
         case instr of
                 Inst op a b c -> do
-                    newInstr@(Inst op newA newB newC) <- foldM go instr $ filter (`notElem` examined) $ getOperands instr
-                    let newInstrs = map (replaceOperand a newA . replaceOperand b newB . replaceOperand c newC) instrs
-                    pure $ newInstr : newInstrs
+                    v <- foldM go instr $ filter (`notElem` examined) $ getOperands instr
+                    pure $ case v of
+                        newInstr@(Inst op newA newB newC) ->
+                            let newInstrs = map (replaceOperand a newA . replaceOperand b newB . replaceOperand c newC) instrs in
+                            newInstr : newInstrs
+                        _ -> instr:instrs
                 _ -> pure $ instr : instrs
 
-    (:) <$> pure newInstr <*> findTemp (getOperands instr ++ examined) newInstrs
+    case res of
+        newInstr:newInstrs -> (:) <$> pure newInstr <*> findTemp (getOperands instr ++ examined) newInstrs
+        [] -> pure []
     where
         go instr a
             -- No JALs or JALRs here, so safe to just use temp for this.

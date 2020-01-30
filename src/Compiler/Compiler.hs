@@ -363,14 +363,16 @@ compileStatement st@(Return (Just expr)) = do
                     Nothing -> error "Unknown current function"
                     Just (_, endLabel) -> endLabel
 
-    Just (FuncDef t _ _ _) <- resolveFuncCall =<< getCurFunc
+    callRes <- resolveFuncCall =<< getCurFunc
+    case callRes of
+        Just (FuncDef t _ _ _) -> do
+            retType <- elaborateType t
+            exprType <- resolveType expr >>= elaborateType
 
-    retType <- elaborateType t
-    exprType <- resolveType expr >>= elaborateType
+            convertInstr <- convert (source, exprType) ("v0", retType)
 
-    convertInstr <- convert (source, exprType) ("v0", retType)
-
-    pure $ Empty : Comment (prettyPrint st) : instr ++ convertInstr ++ [Inst OP_J funcEnd "" ""]
+            pure $ Empty : Comment (prettyPrint st) : instr ++ convertInstr ++ [Inst OP_J funcEnd "" ""]
+        _ -> error "Could not find function call"
 
 compileStatement (Assign (Just op) lhs rhs) = compileStatement $ Assign Nothing lhs (CBinaryOp op lhs rhs)
 compileStatement st@(Assign Nothing lhs rhs) = do
